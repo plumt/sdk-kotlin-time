@@ -1,0 +1,41 @@
+# buildUponDefaultConfig = true — 여기 적지 않은 규칙은 detekt 기본값을 따른다. 바꾼 것만 이유와 함께 둔다.
+
+style:
+  # 프로토콜 상수(바이트 오프셋·비트 마스크)는 이름 붙인 상수로 두되, 테스트의 기대값까지 상수로 뽑지 않는다
+  MagicNumber:
+    excludes: ['**/test/**']
+  # 한국어 KDoc 은 기본 120자를 쉽게 넘긴다 — 결함 신호가 아니다
+  MaxLineLength:
+    active: false
+  # 함수 앞머리의 가드 절은 중첩을 줄이는 권장 패턴이라 세지 않는다
+  ReturnCount:
+    excludeGuardClauses: true
+    # 형식별로 맞으면 바로 돌려주는 파서(HTTP 날짜 세 형식)가 있다
+    max: 5
+
+naming:
+  # 테스트 이름은 백틱 문장으로 쓴다
+  FunctionNaming:
+    excludes: ['**/test/**']
+
+complexity:
+  # 빌더는 설정 항목마다 메서드 하나를 둔다 — 항목이 많은 것이 결함 신호가 아니다
+  TooManyFunctions:
+    excludes: ['**/test/**']
+    ignorePrivate: true
+    thresholdInClasses: 20
+  # 설정 묶음(ClockConfig)은 빌더 항목 수만큼 받는다. NTP 응답 해석은 패킷·길이·난수·왕복·기준점·이름을 함께 받는다
+  LongParameterList:
+    constructorThreshold: 13
+    functionThreshold: 7
+  LongMethod:
+    excludes: ['**/test/**']
+  LargeClass:
+    excludes: ['**/test/**']
+
+exceptions:
+  # 끼운 구현(TimeSource·저장소)의 모든 예외를 원인 보존 실패로 바꾸는 경계 두 곳은 의도적으로 넓게 잡는다(@Suppress 로 표시)
+  TooGenericExceptionCaught:
+    excludes: ['**/test/**']
+  SwallowedException:
+    excludes: ['**/test/**']

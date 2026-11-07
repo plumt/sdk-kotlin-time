@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- NTP(UDP 123)·HTTPS 조회 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 조회 전에 연결 여부를 보고 NO_NETWORK 를 바로 낸다 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+</manifest>
