@@ -71,6 +71,6 @@
 |---|---|
 | `AndroidTime.preferencesStore` | 이름이 비었거나 `/` 를 담으면 `IllegalArgumentException` |
 | 저장된 값이 깨짐(형식 버전·타입·빠진 키·모르는 출처·음수 오차) | 예외 없이 저장소를 지우고 `load()` 가 `null` — 다음 `now()` 가 다시 동기화한다 |
-| `networkMonitor` 가 권한(`ACCESS_NETWORK_STATE`) 없이 불림 | `SecurityException` 을 삼키지 않고 판단만 미룬다 — `true` 를 돌려 실제 조회 결과(원인별 `TimeSyncException`)로 드러난다 |
+| `networkMonitor` 가 권한(`ACCESS_NETWORK_STATE`) 없이 불림 | `SecurityException` 을 잡아 `true` 를 돌린다 — 연결 판단을 실제 조회에 넘겨 원인별 `TimeSyncException` 으로 드러난다 |
 | `INTERNET` 권한이 지워짐 | 소켓이 거부돼 `CONNECTION_FAILED`(Android 버전에 따라 `SOURCE_ERROR`) |
 | API 23 | 부팅 ID 가 `null` 이라 앱 재시작 뒤 오프셋을 되살리지 않는다(오류 아님) |
