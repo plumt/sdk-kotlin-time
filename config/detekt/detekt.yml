@@ -24,9 +24,9 @@ complexity:
     excludes: ['**/test/**']
     ignorePrivate: true
     thresholdInClasses: 20
-  # 설정 묶음(ClockConfig)은 빌더 항목 수만큼 받는다. NTP 응답 해석은 패킷·길이·난수·왕복·기준점·이름을 함께 받는다
+  # 설정 묶음(ClockConfig)은 빌더 항목 수 + 콜백 디스패처만큼 받는다. NTP 응답 해석은 패킷·길이·난수·왕복·기준점·이름을 함께 받는다
   LongParameterList:
-    constructorThreshold: 13
+    constructorThreshold: 14
     functionThreshold: 7
   LongMethod:
     excludes: ['**/test/**']

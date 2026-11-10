@@ -92,10 +92,10 @@ class PersistenceTest {
 
     @Test
     fun `JVM 기본 단조 시계는 프로세스마다 부팅 ID 가 달라 다음 프로세스에서 되살리지 않는다`() {
-        val id = MonotonicClock.system().bootId!!
+        val id = net.plumt.time.internal.SystemMonotonicClock.bootId!!
         org.junit.Assert.assertTrue(id.startsWith("jvm-"))
-        val a = MonotonicClock.system().elapsedMillis()
-        val b = MonotonicClock.system().elapsedMillis()
+        val a = net.plumt.time.internal.SystemMonotonicClock.elapsedMillis()
+        val b = net.plumt.time.internal.SystemMonotonicClock.elapsedMillis()
         org.junit.Assert.assertTrue(b >= a && a >= 0)
     }
 }

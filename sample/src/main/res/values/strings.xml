@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">time sample</string>
+    <string name="now">now (콜백)</string>
+    <string name="sync">sync (콜백)</string>
+    <string name="now_suspend">now (suspend)</string>
+    <string name="peek">peek</string>
+    <string name="java_clock">asJavaClock</string>
+    <string name="invalidate">invalidate</string>
+    <string name="strict">sync (정책 None)</string>
+    <string name="http_fallback">sync (NTP 호스트 없음)</string>
+    <string name="cancel">취소</string>
+    <string name="ready">버튼을 눌러 공개 메서드를 불러 본다</string>
+</resources>

@@ -1,18 +1,37 @@
 package net.plumt.time.internal
 
+import android.annotation.SuppressLint
+import android.os.Build
+import androidx.annotation.RequiresApi
+import android.content.Context
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import net.plumt.time.FailureReason
 import net.plumt.time.FallbackPolicy
+import net.plumt.time.MonotonicClock
+import net.plumt.time.NetworkMonitor
 import net.plumt.time.SyncSnapshot
+import net.plumt.time.SyncStateStore
 import net.plumt.time.TimeOrigin
+import net.plumt.time.TimeCallHandle
+import net.plumt.time.TimeCallback
+import net.plumt.time.TimeConfig
+import net.plumt.time.TimeFailure
 import net.plumt.time.TimeQuery
 import net.plumt.time.TimeReading
+import net.plumt.time.TimeResult
 import net.plumt.time.TimeSample
-import net.plumt.time.TimeSyncException
+import net.plumt.time.TimeSource
+import net.plumt.time.TimeSourceResult
 import net.plumt.time.TrustedClock
+import net.plumt.time.WallClock
 import java.time.Clock
+import java.time.DateTimeException
 import java.time.ZoneId
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -35,7 +54,7 @@ internal class DefaultTrustedClock(private val config: ClockConfig) : TrustedClo
 
     @Volatile private var lastOutcome: Outcome? = null
 
-    @Volatile private var lastFailure: TimeSyncException? = null
+    @Volatile private var lastFailure: SyncError? = null
 
     @Volatile private var consecutiveFailures = 0
 
@@ -47,30 +66,37 @@ internal class DefaultTrustedClock(private val config: ClockConfig) : TrustedClo
     /** KoD 를 보낸 출처 이름 → 다시 물어도 되는 단조 시각. */
     private val silenced = ConcurrentHashMap<String, Long>()
 
-    override suspend fun now(): TimeReading {
+    /** 콜백 형태 호출이 도는 범위. 인스턴스가 사는 동안 유지한다(앱 전체에서 하나만 만든다). */
+    private val callbackScope = CoroutineScope(SupervisorJob() + config.callbackDispatcher)
+
+    override suspend fun now(): TimeResult {
         val now = mono.elapsedMillis()
         val current = validState(now)
         if (current != null && now - current.anchorElapsedMillis <= config.refreshIntervalMillis) {
-            return reading(current, now, stale = false, failure = null)
+            return TimeResult.Success(reading(current, now, stale = false, failure = null))
         }
         val failure = lastFailure
         if (failure != null && consecutiveFailures > 0 && now < nextRetryAtElapsed) return fallback(failure)
         return when (val outcome = syncShared()) {
-            is Outcome.Success -> reading(outcome.snapshot, mono.elapsedMillis(), stale = false, failure = null)
+            is Outcome.Success -> TimeResult.Success(reading(outcome.snapshot, mono.elapsedMillis(), stale = false, failure = null))
             is Outcome.Failure -> fallback(outcome.error)
         }
     }
 
-    override suspend fun sync(): TimeReading = when (val outcome = syncShared()) {
-        is Outcome.Success -> reading(outcome.snapshot, mono.elapsedMillis(), stale = false, failure = null)
-        is Outcome.Failure -> throw outcome.error
+    override suspend fun sync(): TimeResult = when (val outcome = syncShared()) {
+        is Outcome.Success -> TimeResult.Success(reading(outcome.snapshot, mono.elapsedMillis(), stale = false, failure = null))
+        is Outcome.Failure -> TimeResult.Failure(outcome.error.failure)
     }
+
+    override fun now(callback: TimeCallback): TimeCallHandle = callbackScope.launchCallback({ now() }, callback)
+
+    override fun sync(callback: TimeCallback): TimeCallHandle = callbackScope.launchCallback({ sync() }, callback)
 
     override fun peek(): TimeReading? {
         val now = mono.elapsedMillis()
         val current = validState(now) ?: return null
         val stale = now - current.anchorElapsedMillis > config.refreshIntervalMillis
-        return reading(current, now, stale, if (stale) lastFailure else null)
+        return reading(current, now, stale, if (stale) lastFailure?.failure else null)
     }
 
     override fun invalidate() {
@@ -85,17 +111,18 @@ internal class DefaultTrustedClock(private val config: ClockConfig) : TrustedClo
         silenced.clear()
     }
 
+    @SuppressLint("NewApi") // java.time: API 26 또는 앱의 desugaring — README "API 레벨별 동작"
     override fun asJavaClock(): Clock = TrustedJavaClock(this, ZoneId.of(zoneId))
 
     /** 네트워크를 기다리지 않는 현재 시각(`java.time.Clock` 용). */
+    @SuppressLint("NewApi") // java.time: API 26 또는 앱의 desugaring — README "API 레벨별 동작"
     internal fun nonBlockingMillis(): Long {
         val reading = peek()
-        if (reading != null && (!reading.isStale || config.fallbackPolicy != FallbackPolicy.NONE)) return reading.epochMillis
-        if (config.fallbackPolicy == FallbackPolicy.DEVICE_CLOCK) return config.wallClock.currentTimeMillis()
-        throw TimeSyncException(
-            FailureReason.NOT_SYNCED,
-            "쓸 수 있는 동기화가 없고 정책(${config.fallbackPolicy})이 기기 시계를 막는다 — 먼저 sync() 를 부른다",
-            lastFailure,
+        val policy = config.fallbackPolicy
+        if (reading != null && (!reading.isStale || policy != FallbackPolicy.None)) return reading.epochMillis
+        if (policy == FallbackPolicy.DeviceClock) return config.wallClock.currentTimeMillis()
+        throw DateTimeException(
+            "쓸 수 있는 동기화가 없고 정책($policy)이 기기 시계를 막는다 — 먼저 sync() 를 부른다",
         )
     }
 
@@ -129,7 +156,7 @@ internal class DefaultTrustedClock(private val config: ClockConfig) : TrustedClo
                 consecutiveFailures = 0
                 nextRetryAtElapsed = 0L
                 Outcome.Success(snapshot)
-            } catch (e: TimeSyncException) {
+            } catch (e: SyncError) {
                 recordFailure(e)
                 Outcome.Failure(e)
             }
@@ -141,7 +168,7 @@ internal class DefaultTrustedClock(private val config: ClockConfig) : TrustedClo
         }
     }
 
-    private fun recordFailure(error: TimeSyncException) {
+    private fun recordFailure(error: SyncError) {
         lastFailure = error
         // 연결이 없다는 신호만으로 끝난 실패는 네트워크를 건드리지 않았으니 대기를 걸지 않는다 — 연결이 돌아오면 바로 시도한다
         if (error.reason == FailureReason.NO_NETWORK && error.failures.isEmpty() && error.source == null) return
@@ -149,17 +176,17 @@ internal class DefaultTrustedClock(private val config: ClockConfig) : TrustedClo
         nextRetryAtElapsed = mono.elapsedMillis() + backoffMillis(consecutiveFailures)
     }
 
-    private suspend fun querySources(): Pair<TimeSample, net.plumt.time.TimeSource> {
+    private suspend fun querySources(): Pair<TimeSample, TimeSource> {
         if (!config.networkMonitor.isNetworkAvailable()) {
-            throw TimeSyncException(FailureReason.NO_NETWORK, "네트워크에 연결돼 있지 않다")
+            throw SyncError(FailureReason.NO_NETWORK, "네트워크에 연결돼 있지 않다")
         }
-        val failures = ArrayList<TimeSyncException>()
+        val failures = ArrayList<SyncError>()
         for (source in config.sources) {
             coroutineContext.ensureActive()
             val now = mono.elapsedMillis()
             val until = silenced[source.name]
             if (until != null && now < until) {
-                failures += TimeSyncException(
+                failures += SyncError(
                     FailureReason.KISS_OF_DEATH,
                     "${source.name}: 직전 Kiss-o'-Death 로 ${until - now}ms 더 묻지 않는다",
                     null,
@@ -169,37 +196,45 @@ internal class DefaultTrustedClock(private val config: ClockConfig) : TrustedClo
             }
             val result = attempt(source)
             if (result is TimeSample) return result to source
-            val failure = result as TimeSyncException
+            val failure = result as SyncError
             if (failure.reason == FailureReason.KISS_OF_DEATH) silenced[source.name] = mono.elapsedMillis() + KOD_SILENCE_MILLIS
             failures += failure
         }
         throw Failures.aggregate(failures)
     }
 
-    /** 출처 하나를 묻고 검사한다. 성공이면 [TimeSample], 실패면 [TimeSyncException]. */
+    /** 출처 하나를 묻고 검사한다. 성공이면 [TimeSample], 실패면 [SyncError]. */
     @Suppress("TooGenericExceptionCaught")
-    private fun attempt(source: net.plumt.time.TimeSource): Any {
+    private fun attempt(source: TimeSource): Any {
+        val name = source.name
         val sample = try {
-            source.query(TimeQuery(config.timeoutMillis, mono))
+            val query = TimeQuery(config.timeoutMillis, mono)
+            if (source is SampleSource) {
+                source.sample(query)
+            } else {
+                when (val result = source.query(query)) {
+                    is TimeSourceResult.Success -> result.sample
+                    is TimeSourceResult.Failure -> return SyncError(result.reason, "$name: ${result.message}", result.cause, name)
+                }
+            }
         } catch (e: Exception) {
             // 끼운 구현의 모든 예외를 원인 보존 실패로 바꾼다 — 한 출처의 오류가 다음 출처로의 폴백을 끊지 않게 한다
-            return Failures.classify(e, source.name)
+            return Failures.classify(e, name)
         }
-        val name = source.name
         return when {
-            sample.roundTripMillis > config.maxRoundTripMillis -> TimeSyncException(
+            sample.roundTripMillis > config.maxRoundTripMillis -> SyncError(
                 FailureReason.ROUND_TRIP_TOO_LONG,
                 "$name: 왕복 ${sample.roundTripMillis}ms 가 상한 ${config.maxRoundTripMillis}ms 를 넘는다",
                 null,
                 name,
             )
-            sample.serverEpochMillis !in MIN_VALID_EPOCH_MILLIS..MAX_VALID_EPOCH_MILLIS -> TimeSyncException(
+            sample.serverEpochMillis !in MIN_VALID_EPOCH_MILLIS..MAX_VALID_EPOCH_MILLIS -> SyncError(
                 FailureReason.IMPLAUSIBLE_TIME,
                 "$name: 서버 시각 ${sample.serverEpochMillis} 이 받아들일 범위($MIN_VALID_EPOCH_MILLIS..$MAX_VALID_EPOCH_MILLIS) 밖이다",
                 null,
                 name,
             )
-            sample.anchorElapsedMillis > mono.elapsedMillis() -> TimeSyncException(
+            sample.anchorElapsedMillis > mono.elapsedMillis() -> SyncError(
                 FailureReason.INVALID_RESPONSE,
                 "$name: 기준점이 지금 단조 시계보다 미래다",
                 null,
@@ -209,12 +244,18 @@ internal class DefaultTrustedClock(private val config: ClockConfig) : TrustedClo
         }
     }
 
-    private fun fallback(error: TimeSyncException): TimeReading {
+    private fun fallback(error: SyncError): TimeResult {
         val now = mono.elapsedMillis()
         val stale = validState(now)
-        if (stale != null && config.fallbackPolicy != FallbackPolicy.NONE) return reading(stale, now, stale = true, failure = error)
-        if (config.fallbackPolicy == FallbackPolicy.DEVICE_CLOCK) {
-            return TimeReading(
+        val failure = error.failure
+        val (useStale, useDevice) = when (config.fallbackPolicy) {
+            FallbackPolicy.DeviceClock -> true to true
+            FallbackPolicy.LastSyncOnly -> true to false
+            FallbackPolicy.None -> false to false
+        }
+        if (stale != null && useStale) return TimeResult.Success(reading(stale, now, stale = true, failure = failure))
+        if (useDevice) {
+            val device = TimeReading(
                 epochMillis = config.wallClock.currentTimeMillis(),
                 origin = TimeOrigin.DEVICE_CLOCK,
                 uncertaintyMillis = null,
@@ -222,11 +263,12 @@ internal class DefaultTrustedClock(private val config: ClockConfig) : TrustedClo
                 ageMillis = 0,
                 isStale = false,
                 deviceClockOffsetMillis = 0,
-                failure = error,
+                failure = failure,
                 zoneId = zoneId,
             )
+            return TimeResult.Success(device)
         }
-        throw error
+        return TimeResult.Failure(failure)
     }
 
     /** 쓸 수 있는 오프셋(갱신 주기를 넘겼어도 최대 보관 기간 안쪽). 처음 부를 때 저장소에서 되살린다. */
@@ -263,7 +305,7 @@ internal class DefaultTrustedClock(private val config: ClockConfig) : TrustedClo
         }
     }
 
-    private fun reading(snapshot: SyncSnapshot, now: Long, stale: Boolean, failure: TimeSyncException?): TimeReading {
+    private fun reading(snapshot: SyncSnapshot, now: Long, stale: Boolean, failure: TimeFailure?): TimeReading {
         val age = (now - snapshot.anchorElapsedMillis).coerceAtLeast(0)
         val epoch = snapshot.serverEpochMillis + age
         return TimeReading(
@@ -281,10 +323,51 @@ internal class DefaultTrustedClock(private val config: ClockConfig) : TrustedClo
 
     private sealed class Outcome {
         class Success(val snapshot: SyncSnapshot) : Outcome()
-        class Failure(val error: TimeSyncException) : Outcome()
+        class Failure(val error: SyncError) : Outcome()
     }
 
     internal companion object {
+        /** 공개 진입점 [TrustedClock.create] 의 구현. 정하지 않은 결합 지점에 Android 구현을 끼운다. */
+        fun create(context: Context, config: TimeConfig): DefaultTrustedClock {
+            val app = context.applicationContext ?: context
+            return create(
+                config = config,
+                monotonicClock = config.monotonicClock ?: ElapsedRealtimeClock(BootCountReader(app.contentResolver)),
+                networkMonitor = config.networkMonitor ?: ConnectivityNetworkMonitor(
+                    app.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager?,
+                ),
+                store = config.store ?: PreferencesSyncStateStore(
+                    app.getSharedPreferences(PreferencesSyncStateStore.DEFAULT_NAME, Context.MODE_PRIVATE),
+                ),
+                callbackDispatcher = Dispatchers.Main,
+            )
+        }
+
+        /** 결합 지점을 모두 받아 만든다(시험은 Android 없이 이 경로를 쓴다). */
+        fun create(
+            config: TimeConfig,
+            monotonicClock: MonotonicClock,
+            networkMonitor: NetworkMonitor,
+            store: SyncStateStore,
+            callbackDispatcher: CoroutineDispatcher,
+        ): DefaultTrustedClock = DefaultTrustedClock(
+            ClockConfig(
+                sources = config.resolvedSources,
+                zoneId = config.zoneId,
+                timeoutMillis = config.timeoutMillis,
+                maxRoundTripMillis = config.maxRoundTripMillis,
+                refreshIntervalMillis = config.refreshIntervalMillis,
+                maxAgeMillis = config.maxAgeMillis,
+                fallbackPolicy = config.fallbackPolicy,
+                monotonicClock = monotonicClock,
+                wallClock = config.wallClock ?: WallClock.system(),
+                networkMonitor = networkMonitor,
+                store = store,
+                dispatcher = config.dispatcher,
+                callbackDispatcher = callbackDispatcher,
+            ),
+        )
+
         /** 2025-01-01T00:00:00Z. 이보다 이른 서버 시각은 손상·오류로 본다. */
         const val MIN_VALID_EPOCH_MILLIS = 1_735_689_600_000L
 
@@ -314,6 +397,7 @@ internal class DefaultTrustedClock(private val config: ClockConfig) : TrustedClo
 }
 
 /** 네트워크를 기다리지 않는 `java.time.Clock` 어댑터. */
+@RequiresApi(Build.VERSION_CODES.O)
 internal class TrustedJavaClock(private val clock: DefaultTrustedClock, private val zone: ZoneId) : Clock() {
     override fun getZone(): ZoneId = zone
 

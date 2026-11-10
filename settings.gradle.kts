@@ -17,4 +17,4 @@ dependencyResolutionManagement {
 rootProject.name = "sdk-kotlin-time"
 
 include(":time")
-include(":time-android")
+include(":sample")

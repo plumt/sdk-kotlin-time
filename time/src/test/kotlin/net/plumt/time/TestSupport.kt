@@ -36,9 +36,9 @@ class ScriptedSource(
     private val answer: (TimeQuery) -> TimeSample,
 ) : TimeSource {
     val calls = AtomicInteger()
-    override fun query(request: TimeQuery): TimeSample {
+    override fun query(request: TimeQuery): TimeSourceResult {
         calls.incrementAndGet()
-        return answer(request)
+        return TimeSourceResult.Success(answer(request))
     }
 }
 
@@ -56,8 +56,68 @@ fun okSource(
 
 fun failingSource(name: String, error: () -> Throwable): ScriptedSource = ScriptedSource(name) { throw error() }
 
-fun builder(mono: FakeMonotonic, wall: FakeWall = FakeWall(), vararg sources: TimeSource): TrustedClock.Builder =
-    TrustedClock.builder()
+/** 실패를 결과로 돌려주는 출처. */
+class FailingResultSource(override val name: String, private val failure: () -> TimeSourceResult.Failure) : TimeSource {
+    override val origin: TimeOrigin = TimeOrigin.CUSTOM
+    val calls = AtomicInteger()
+    override fun query(request: TimeQuery): TimeSourceResult {
+        calls.incrementAndGet()
+        return failure()
+    }
+}
+
+/** 결과가 [TimeResult.Failure] 일 때 시험이 잡는 신호. */
+class FailedResult(val failure: TimeFailure) : AssertionError(failure.message, failure.cause) {
+    val reason: FailureReason get() = failure.reason
+    val source: String? get() = failure.source
+    val failures: List<TimeFailure> get() = failure.attempts
+}
+
+fun TimeResult.orThrow(): TimeReading = when (this) {
+    is TimeResult.Success -> reading
+    is TimeResult.Failure -> throw FailedResult(failure)
+}
+
+/** 시험용 감싸개 — suspend 결과를 [TimeReading] 으로 풀고 실패는 [FailedResult] 로 던진다. */
+internal class TestClock(val real: net.plumt.time.internal.DefaultTrustedClock) {
+    val zoneId: String get() = real.zoneId
+    val waitingCallers get() = real.waitingCallers
+    suspend fun now(): TimeReading = real.now().orThrow()
+    suspend fun sync(): TimeReading = real.sync().orThrow()
+    fun peek(): TimeReading? = real.peek()
+    fun invalidate() = real.invalidate()
+    fun asJavaClock(): java.time.Clock = real.asJavaClock()
+}
+
+/** 시험 빌더 — [TimeConfig.Builder] 에 Android 없이 결합 지점을 끼운다. */
+internal class TestBuilder(
+    private val b: TimeConfig.Builder = TimeConfig.builder(),
+) {
+    private var mono: MonotonicClock = net.plumt.time.internal.SystemMonotonicClock
+    private var network: NetworkMonitor = NetworkMonitor.assumeAvailable()
+    private var store: SyncStateStore = SyncStateStore.inMemory()
+    fun ntpServers(v: List<String>) = apply { b.ntpServers(v) }
+    fun httpDateUrls(v: List<String>) = apply { b.httpDateUrls(v) }
+    fun sources(v: List<TimeSource>) = apply { b.sources(v) }
+    fun zone(v: String) = apply { b.zone(v) }
+    fun zone(v: java.time.ZoneId) = apply { b.zone(v) }
+    fun timeoutMillis(v: Int) = apply { b.timeoutMillis(v) }
+    fun maxRoundTripMillis(v: Long) = apply { b.maxRoundTripMillis(v) }
+    fun refreshIntervalMillis(v: Long) = apply { b.refreshIntervalMillis(v) }
+    fun maxAgeMillis(v: Long) = apply { b.maxAgeMillis(v) }
+    fun fallbackPolicy(v: FallbackPolicy) = apply { b.fallbackPolicy(v) }
+    fun monotonicClock(v: MonotonicClock) = apply { mono = v }
+    fun wallClock(v: WallClock) = apply { b.wallClock(v) }
+    fun networkMonitor(v: NetworkMonitor) = apply { network = v }
+    fun store(v: SyncStateStore) = apply { store = v }
+    fun dispatcher(v: kotlinx.coroutines.CoroutineDispatcher) = apply { b.dispatcher(v) }
+    fun buildReal(): net.plumt.time.internal.DefaultTrustedClock =
+        net.plumt.time.internal.DefaultTrustedClock.create(b.build(), mono, network, store, kotlinx.coroutines.Dispatchers.Unconfined)
+    fun build(): TestClock = TestClock(buildReal())
+}
+
+internal fun builder(mono: FakeMonotonic, wall: FakeWall = FakeWall(), vararg sources: TimeSource): TestBuilder =
+    TestBuilder()
         .monotonicClock(mono)
         .wallClock(wall)
         .sources(sources.toList())

@@ -3,7 +3,6 @@ package net.plumt.time.internal
 import net.plumt.time.TimeOrigin
 import net.plumt.time.TimeQuery
 import net.plumt.time.TimeSample
-import net.plumt.time.TimeSource
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -15,12 +14,12 @@ internal class NtpTimeSource(
     private val port: Int,
     private val resolver: (String) -> InetAddress = InetAddress::getByName,
     private val nonces: () -> Long = { RANDOM.nextLong().takeIf { it != 0L } ?: 1L },
-) : TimeSource {
+) : SampleSource() {
 
     override val name: String = if (port == DEFAULT_PORT) host else "$host:$port"
     override val origin: TimeOrigin = TimeOrigin.NTP
 
-    override fun query(request: TimeQuery): TimeSample {
+    override fun sample(request: TimeQuery): TimeSample {
         val address = resolver(host)
         val nonce = nonces()
         DatagramSocket().use { socket ->

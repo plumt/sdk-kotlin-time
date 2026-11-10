@@ -1,4 +1,4 @@
-package net.plumt.time.android.internal
+package net.plumt.time.internal
 
 import android.content.ContentResolver
 import android.content.SharedPreferences
@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
+import androidx.annotation.RequiresApi
 import net.plumt.time.MonotonicClock
 import net.plumt.time.NetworkMonitor
 import net.plumt.time.SyncSnapshot
@@ -15,11 +16,10 @@ import net.plumt.time.TimeOrigin
 
 /** `Settings.Global.BOOT_COUNT` 읽기(API 24+). 없거나 못 읽으면 `null`. */
 internal class BootCountReader(private val resolver: ContentResolver) {
-    fun read(): Int? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return null
-        val count = Settings.Global.getInt(resolver, Settings.Global.BOOT_COUNT, -1)
-        return count.takeIf { it >= 0 }
-    }
+    fun read(): Int? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) readApi24() else null
+
+    @RequiresApi(Build.VERSION_CODES.N)
+    private fun readApi24(): Int? = Settings.Global.getInt(resolver, Settings.Global.BOOT_COUNT, -1).takeIf { it >= 0 }
 }
 
 internal class ElapsedRealtimeClock(private val bootCount: BootCountReader) : MonotonicClock {
@@ -44,36 +44,42 @@ internal class ConnectivityNetworkMonitor(private val manager: ConnectivityManag
 }
 
 /**
- * 원시 값 키로 저장한다. 형식 버전이 다르거나 값이 깨졌으면 지우고 `null` — 캐시라 잃어도 다음 동기화가 채운다.
+ * 원시 값 키로 저장한다. 형식 버전 2 는 출처를 고정 저장 키([TimeOrigin.storageKey])로 적는다.
+ * 버전 1(출처를 열거형 이름으로 적었다)도 읽고 바로 버전 2 로 다시 쓴다. 그 밖의 버전이거나 값이 깨졌으면 지우고 `null`
+ * — 캐시라 잃어도 다음 동기화가 채운다.
  */
 internal class PreferencesSyncStateStore(private val prefs: SharedPreferences) : SyncStateStore {
 
     override fun load(): SyncSnapshot? {
         if (!prefs.contains(KEY_VERSION)) return null
-        val snapshot = read()
-        if (snapshot == null) clear()
+        val version = try {
+            prefs.getInt(KEY_VERSION, -1)
+        } catch (_: ClassCastException) {
+            -1
+        }
+        val snapshot = read(version)
+        if (snapshot == null) clear() else if (version != VERSION) save(snapshot)
         return snapshot
     }
 
-    private fun read(): SyncSnapshot? = try {
-        if (prefs.getInt(KEY_VERSION, -1) != VERSION) {
+    private fun read(version: Int): SyncSnapshot? = try {
+        val origin = when (version) {
+            VERSION -> TimeOrigin.fromStorageKey(prefs.getString(KEY_ORIGIN, null))
+            LEGACY_VERSION -> TimeOrigin.fromLegacyName(prefs.getString(KEY_ORIGIN, null))
+            else -> null
+        }?.takeIf { it != TimeOrigin.DEVICE_CLOCK }
+        val source = prefs.getString(KEY_SOURCE, null)
+        if (origin == null || source == null || !hasNumbers()) {
             null
         } else {
-            val origin = TimeOrigin.values().firstOrNull { it.name == prefs.getString(KEY_ORIGIN, null) }
-                ?.takeIf { it != TimeOrigin.DEVICE_CLOCK }
-            val source = prefs.getString(KEY_SOURCE, null)
-            if (origin == null || source == null || !hasNumbers()) {
-                null
-            } else {
-                SyncSnapshot(
-                    serverEpochMillis = prefs.getLong(KEY_SERVER, 0),
-                    anchorElapsedMillis = prefs.getLong(KEY_ANCHOR, 0),
-                    uncertaintyMillis = prefs.getLong(KEY_UNCERTAINTY, -1),
-                    origin = origin,
-                    sourceName = source,
-                    bootId = prefs.getString(KEY_BOOT, null),
-                )
-            }
+            SyncSnapshot(
+                serverEpochMillis = prefs.getLong(KEY_SERVER, 0),
+                anchorElapsedMillis = prefs.getLong(KEY_ANCHOR, 0),
+                uncertaintyMillis = prefs.getLong(KEY_UNCERTAINTY, -1),
+                origin = origin,
+                sourceName = source,
+                bootId = prefs.getString(KEY_BOOT, null),
+            )
         }
     } catch (_: ClassCastException) {
         null // 같은 키에 다른 타입이 들어 있다
@@ -89,7 +95,7 @@ internal class PreferencesSyncStateStore(private val prefs: SharedPreferences) :
             .putLong(KEY_SERVER, snapshot.serverEpochMillis)
             .putLong(KEY_ANCHOR, snapshot.anchorElapsedMillis)
             .putLong(KEY_UNCERTAINTY, snapshot.uncertaintyMillis)
-            .putString(KEY_ORIGIN, snapshot.origin.name)
+            .putString(KEY_ORIGIN, snapshot.origin.storageKey)
             .putString(KEY_SOURCE, snapshot.sourceName)
             .putString(KEY_BOOT, snapshot.bootId)
             .apply()
@@ -99,8 +105,10 @@ internal class PreferencesSyncStateStore(private val prefs: SharedPreferences) :
         prefs.edit().clear().apply()
     }
 
-    private companion object {
-        const val VERSION = 1
+    internal companion object {
+        const val DEFAULT_NAME = "net.plumt.time.sync"
+        const val VERSION = 2
+        const val LEGACY_VERSION = 1
         const val KEY_VERSION = "v"
         const val KEY_SERVER = "server"
         const val KEY_ANCHOR = "anchor"

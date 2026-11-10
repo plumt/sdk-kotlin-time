@@ -68,14 +68,62 @@ class TypesTest {
     }
 
     @Test
-    fun `TimeSyncException 기본값`() {
-        val e = TimeSyncException(FailureReason.TIMEOUT, "m")
-        assertNull(e.cause)
-        assertNull(e.source)
-        assertTrue(e.failures.isEmpty())
-        assertEquals("m", e.message)
-        assertTrue(e is RuntimeException)
-        assertEquals(15, FailureReason.values().size)
+    fun `상수 클래스 — 이름·문자열·목록은 바꿀 수 없다`() {
+        assertEquals(14, FailureReason.values.size)
+        assertEquals(FailureReason.values.map { it.name }.toSet().size, FailureReason.values.size)
+        assertEquals("TIMEOUT", FailureReason.TIMEOUT.toString())
+        assertEquals(listOf("NTP", "HTTP_DATE", "CUSTOM", "DEVICE_CLOCK"), TimeOrigin.values.map { it.name })
+        assertEquals("NTP", TimeOrigin.NTP.toString())
+        assertThrows<UnsupportedOperationException> { (FailureReason.values as java.util.List<FailureReason>).add(FailureReason.TIMEOUT) }
+        assertEquals(TimeOrigin.HTTP_DATE, TimeOrigin.fromStorageKey("http-date"))
+        assertEquals(TimeOrigin.HTTP_DATE, TimeOrigin.fromLegacyName("HTTP_DATE"))
+        assertNull(TimeOrigin.fromStorageKey("HTTP_DATE"))
+        assertNull(TimeOrigin.fromLegacyName(null))
+    }
+
+    @Test
+    fun `결과 타입 — 같음·문자열`() {
+        val f = net.plumt.time.internal.SyncError(FailureReason.TIMEOUT, "m", null, "s").failure
+        assertEquals("m", f.message)
+        assertEquals("s", f.source)
+        assertTrue(f.attempts.isEmpty())
+        assertEquals(f, net.plumt.time.internal.SyncError(FailureReason.TIMEOUT, "m", null, "s").failure)
+        assertEquals(f.hashCode(), net.plumt.time.internal.SyncError(FailureReason.TIMEOUT, "m", null, "s").failure.hashCode())
+        assertNotEquals(f, net.plumt.time.internal.SyncError(FailureReason.TIMEOUT, "m").failure)
+        assertNotEquals(f, "x")
+        assertTrue(f.toString().contains("TIMEOUT"))
+        val failure = TimeResult.Failure(f)
+        assertEquals(failure, TimeResult.Failure(f))
+        assertEquals(failure.hashCode(), TimeResult.Failure(f).hashCode())
+        assertNotEquals(failure, "x")
+        assertTrue(failure.toString().startsWith("Failure("))
+        val reading = FakeTrustedClock(SERVER_TIME).peek()!!
+        val success = TimeResult.Success(reading)
+        assertEquals(success, TimeResult.Success(FakeTrustedClock(SERVER_TIME).peek()!!))
+        assertEquals(success.hashCode(), TimeResult.Success(FakeTrustedClock(SERVER_TIME).peek()!!).hashCode())
+        assertNotEquals(success, TimeResult.Success(FakeTrustedClock(SERVER_TIME + 1).peek()!!))
+        assertNotEquals(reading, "x")
+        assertTrue(success.toString().startsWith("Success("))
+        val sample = TimeSample(1, 2, 3, 4)
+        assertEquals(sample, TimeSample(1, 2, 3, 4))
+        assertEquals(sample.hashCode(), TimeSample(1, 2, 3, 4).hashCode())
+        listOf(TimeSample(9, 2, 3, 4), TimeSample(1, 9, 3, 4), TimeSample(1, 2, 9, 4), TimeSample(1, 2, 3, 9), "x")
+            .forEach { assertNotEquals(sample, it) }
+        assertTrue(sample.toString().contains("rtt=3"))
+        val ok = TimeSourceResult.Success(sample)
+        assertEquals(ok, TimeSourceResult.Success(TimeSample(1, 2, 3, 4)))
+        assertEquals(ok.hashCode(), TimeSourceResult.Success(TimeSample(1, 2, 3, 4)).hashCode())
+        assertNotEquals(ok, "x")
+        assertTrue(ok.toString().startsWith("Success("))
+        val io = java.io.IOException()
+        val bad = TimeSourceResult.Failure(FailureReason.TIMEOUT, "m", io)
+        assertEquals(bad, TimeSourceResult.Failure(FailureReason.TIMEOUT, "m", io))
+        assertEquals(bad.hashCode(), TimeSourceResult.Failure(FailureReason.TIMEOUT, "m", io).hashCode())
+        assertNotEquals(bad, TimeSourceResult.Failure(FailureReason.TIMEOUT, "m"))
+        assertEquals(TimeSourceResult.Failure(FailureReason.TIMEOUT, "m").hashCode(), TimeSourceResult.Failure(FailureReason.TIMEOUT, "m").hashCode())
+        assertNotEquals(bad, "x")
+        assertTrue(bad.toString().contains("TIMEOUT"))
+        assertTrue(TimeQuery(5, FakeMonotonic()).toString().contains("5"))
     }
 
     @Test
@@ -90,6 +138,6 @@ class TypesTest {
         assertEquals(s, store.load())
         store.clear()
         assertNull(store.load())
-        assertEquals(4, TimeOrigin.values().size)
+        assertEquals(4, TimeOrigin.values.size)
     }
 }

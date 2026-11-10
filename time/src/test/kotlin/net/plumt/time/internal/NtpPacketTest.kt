@@ -3,7 +3,6 @@ package net.plumt.time.internal
 import net.plumt.time.FailureReason
 import net.plumt.time.NtpReply
 import net.plumt.time.SERVER_TIME
-import net.plumt.time.TimeSyncException
 import net.plumt.time.assertThrows
 import net.plumt.time.writeNtpTimestamp
 import net.plumt.time.writeUInt32
@@ -23,7 +22,7 @@ class NtpPacketTest {
         return Ntp.parse("srv", bytes, bytes.size, nonce, roundTrip, anchor)
     }
 
-    private fun failure(reply: NtpReply, roundTrip: Long = 40): TimeSyncException =
+    private fun failure(reply: NtpReply, roundTrip: Long = 40): SyncError =
         assertThrows { parse(reply, roundTrip) }
 
     @Test
@@ -174,7 +173,7 @@ class NtpPacketTest {
     }
 
     @Test
-    fun `무작위 패킷은 TimeSyncException 이나 결과만 낸다(크래시 없음)`() {
+    fun `무작위 패킷은 SyncError 이나 결과만 낸다(크래시 없음)`() {
         val random = Random(20261103)
         var parsed = 0
         repeat(20_000) {
@@ -190,7 +189,7 @@ class NtpPacketTest {
             try {
                 Ntp.parse("fuzz", bytes, size, nonce, random.nextLong(0, 2_000), 1)
                 parsed++
-            } catch (_: TimeSyncException) {
+            } catch (_: SyncError) {
                 // 원인 있는 실패만 허용한다
             }
         }

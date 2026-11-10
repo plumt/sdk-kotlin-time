@@ -13,8 +13,8 @@ class EndToEndTest {
 
     private val date = "Date: Tue, 03 Nov 2026 12:00:00 GMT"
 
-    private fun clock(vararg sources: TimeSource, policy: FallbackPolicy = FallbackPolicy.DEVICE_CLOCK, wall: FakeWall = FakeWall()) =
-        TrustedClock.builder().sources(sources.toList()).timeoutMillis(300).fallbackPolicy(policy)
+    private fun clock(vararg sources: TimeSource, policy: FallbackPolicy = FallbackPolicy.DeviceClock, wall: FakeWall = FakeWall()) =
+        TestBuilder().sources(sources.toList()).timeoutMillis(300).fallbackPolicy(policy)
             .wallClock(wall).dispatcher(Dispatchers.IO).build()
 
     @Test
@@ -31,7 +31,7 @@ class EndToEndTest {
     fun `NTP 시간 초과 → HTTP Date`() = runBlocking {
         FakeNtpServer { null }.use { ntp ->
             FakeHttpServer { FakeHttpServer.response(date) }.use { http ->
-                val reading = clock(TimeSources.ntp("127.0.0.1", ntp.port), TimeSources.httpDate(http.url, true)).now()
+                val reading = clock(TimeSources.ntp("127.0.0.1", ntp.port), TimeSources.httpDateAllowingCleartext(http.url)).now()
                 assertEquals(TimeOrigin.HTTP_DATE, reading.origin)
                 assertEquals(http.url, reading.sourceName)
                 assertTrue(reading.epochMillis - SERVER_TIME in 500..2_000)
@@ -45,12 +45,12 @@ class EndToEndTest {
         FakeNtpServer { NtpReply(stratum = 0, referenceId = "DENY".toByteArray()).build(it) }.use { ntp ->
             FakeHttpServer { FakeHttpServer.response("Server: x") }.use { http ->
                 val wall = FakeWall(now = 42_000)
-                val reading = clock(TimeSources.ntp("127.0.0.1", ntp.port), TimeSources.httpDate(http.url, true), wall = wall).now()
+                val reading = clock(TimeSources.ntp("127.0.0.1", ntp.port), TimeSources.httpDateAllowingCleartext(http.url), wall = wall).now()
                 assertTrue(reading.isDeviceFallback)
                 assertEquals(42_000L, reading.epochMillis)
                 val failure = reading.failure!!
                 assertEquals(FailureReason.ALL_SOURCES_FAILED, failure.reason)
-                assertEquals(listOf(FailureReason.KISS_OF_DEATH, FailureReason.HTTP_DATE_MISSING), failure.failures.map { it.reason })
+                assertEquals(listOf(FailureReason.KISS_OF_DEATH, FailureReason.HTTP_DATE_MISSING), failure.attempts.map { it.reason })
             }
         }
     }
@@ -59,8 +59,8 @@ class EndToEndTest {
     fun `모든 서버 응답 없음 — 정책 NONE 은 TIMEOUT 을 던진다`() = runBlocking {
         FakeNtpServer { null }.use { a ->
             FakeNtpServer { null }.use { b ->
-                val e = assertThrowsSuspend<TimeSyncException> {
-                    clock(TimeSources.ntp("127.0.0.1", a.port), TimeSources.ntp("127.0.0.1", b.port), policy = FallbackPolicy.NONE).now()
+                val e = assertThrowsSuspend<FailedResult> {
+                    clock(TimeSources.ntp("127.0.0.1", a.port), TimeSources.ntp("127.0.0.1", b.port), policy = FallbackPolicy.None).now()
                 }
                 assertEquals(FailureReason.TIMEOUT, e.reason)
                 assertEquals(2, e.failures.size)
@@ -72,8 +72,8 @@ class EndToEndTest {
     fun `HTTP 연결 거부·Date 파싱 실패 원인`() = runBlocking {
         val closed = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
         FakeHttpServer { FakeHttpServer.response("Date: soon") }.use { bad ->
-            val e = assertThrowsSuspend<TimeSyncException> {
-                clock(TimeSources.httpDate("http://127.0.0.1:$closed/", true), TimeSources.httpDate(bad.url, true)).sync()
+            val e = assertThrowsSuspend<FailedResult> {
+                clock(TimeSources.httpDateAllowingCleartext("http://127.0.0.1:$closed/"), TimeSources.httpDateAllowingCleartext(bad.url)).sync()
             }
             assertEquals(listOf(FailureReason.CONNECTION_FAILED, FailureReason.HTTP_DATE_INVALID), e.failures.map { it.reason })
             assertTrue(e.failures[0].cause is java.net.ConnectException)
@@ -83,7 +83,7 @@ class EndToEndTest {
     @Test
     fun `호스트 이름 조회 실패는 HOST_NOT_FOUND`() = runBlocking {
         val source = net.plumt.time.internal.NtpTimeSource("nowhere.invalid", 123, resolver = { throw java.net.UnknownHostException(it) })
-        val e = assertThrowsSuspend<TimeSyncException> { clock(source).sync() }
+        val e = assertThrowsSuspend<FailedResult> { clock(source).sync() }
         assertEquals(FailureReason.HOST_NOT_FOUND, e.reason)
         assertEquals(FailureReason.HOST_NOT_FOUND, e.failures.single().reason)
     }

@@ -157,10 +157,10 @@ class TrustedClockTest {
             if (fail) throw SocketTimeoutException()
             TimeSample(SERVER_TIME, mono.elapsedMillis(), 10, 10)
         }
-        val clock = builder(mono, wall, source).fallbackPolicy(FallbackPolicy.LAST_SYNC_ONLY)
+        val clock = builder(mono, wall, source).fallbackPolicy(FallbackPolicy.LastSyncOnly)
             .refreshIntervalMillis(10_000).maxAgeMillis(20_000).build()
         fail = true
-        val first = assertThrowsSuspend<TimeSyncException> { clock.now() }
+        val first = assertThrowsSuspend<FailedResult> { clock.now() }
         assertEquals(FailureReason.TIMEOUT, first.reason)
         fail = false
         clock.sync()
@@ -168,7 +168,7 @@ class TrustedClockTest {
         mono.advance(15_000)
         assertTrue(clock.now().isStale)
         mono.advance(10_000)
-        val gone = assertThrowsSuspend<TimeSyncException> { clock.now() }
+        val gone = assertThrowsSuspend<FailedResult> { clock.now() }
         assertEquals(FailureReason.TIMEOUT, gone.reason)
     }
 
@@ -179,14 +179,14 @@ class TrustedClockTest {
             if (fail) throw SocketTimeoutException()
             TimeSample(SERVER_TIME, mono.elapsedMillis(), 10, 10)
         }
-        val clock = builder(mono, wall, source).fallbackPolicy(FallbackPolicy.NONE)
+        val clock = builder(mono, wall, source).fallbackPolicy(FallbackPolicy.None)
             .refreshIntervalMillis(10_000).maxAgeMillis(20_000).build()
         clock.now()
         fail = true
         mono.advance(15_000)
-        assertEquals(FailureReason.TIMEOUT, assertThrowsSuspend<TimeSyncException> { clock.now() }.reason)
+        assertEquals(FailureReason.TIMEOUT, assertThrowsSuspend<FailedResult> { clock.now() }.reason)
         // 대기 중에도 같은 실패를 던진다
-        assertEquals(FailureReason.TIMEOUT, assertThrowsSuspend<TimeSyncException> { clock.now() }.reason)
+        assertEquals(FailureReason.TIMEOUT, assertThrowsSuspend<FailedResult> { clock.now() }.reason)
     }
 
     @Test
@@ -202,7 +202,7 @@ class TrustedClockTest {
 
     @Test
     fun `묶음 실패 — 원인이 하나로 모이면 그 원인, 섞이면 ALL_SOURCES_FAILED`() = runBlocking {
-        suspend fun reasonOf(vararg errors: () -> Throwable): TimeSyncException {
+        suspend fun reasonOf(vararg errors: () -> Throwable): FailedResult {
             val sources = errors.mapIndexed { i, e -> failingSource("s$i", e) }.toTypedArray()
             return assertThrowsSuspend { builder(mono, wall, *sources).build().sync() }
         }
@@ -215,7 +215,7 @@ class TrustedClockTest {
             listOf(FailureReason.TIMEOUT, FailureReason.HOST_NOT_FOUND, FailureReason.CONNECTION_FAILED),
             mixed.failures.map { it.reason },
         )
-        assertSame(mixed.failures.first(), mixed.cause)
+        assertNull(mixed.cause)
         assertNull(mixed.source)
         assertTrue(mixed.message!!.contains("s0=TIMEOUT"))
     }
@@ -224,7 +224,7 @@ class TrustedClockTest {
     fun `왕복 상한을 넘은 결과는 ROUND_TRIP_TOO_LONG 이고 정확히 상한이면 받는다`() = runBlocking {
         val clock = builder(mono, wall, okSource(mono, roundTrip = 1_500)).build()
         assertEquals(SERVER_TIME, clock.sync().epochMillis)
-        val e = assertThrowsSuspend<TimeSyncException> { builder(mono, wall, okSource(mono, roundTrip = 1_501)).build().sync() }
+        val e = assertThrowsSuspend<FailedResult> { builder(mono, wall, okSource(mono, roundTrip = 1_501)).build().sync() }
         assertEquals(FailureReason.ROUND_TRIP_TOO_LONG, e.failures.single().reason)
     }
 
@@ -234,7 +234,7 @@ class TrustedClockTest {
         val max = Instant.parse("2200-01-01T00:00:00Z").toEpochMilli()
         listOf(min, max).forEach { t -> builder(mono, wall, okSource(mono, serverTime = { t })).build().sync() }
         listOf(min - 1, max + 1, 0L, -1L).forEach { t ->
-            val e = assertThrowsSuspend<TimeSyncException> { builder(mono, wall, okSource(mono, serverTime = { t })).build().sync() }
+            val e = assertThrowsSuspend<FailedResult> { builder(mono, wall, okSource(mono, serverTime = { t })).build().sync() }
             assertEquals(FailureReason.IMPLAUSIBLE_TIME, e.failures.single().reason)
         }
     }
@@ -242,30 +242,33 @@ class TrustedClockTest {
     @Test
     fun `기준점이 미래인 결과는 INVALID_RESPONSE`() = runBlocking {
         val source = ScriptedSource("a") { TimeSample(SERVER_TIME, mono.elapsedMillis() + 1, 0, 0) }
-        val e = assertThrowsSuspend<TimeSyncException> { builder(mono, wall, source).build().sync() }
+        val e = assertThrowsSuspend<FailedResult> { builder(mono, wall, source).build().sync() }
         assertEquals(FailureReason.INVALID_RESPONSE, e.failures.single().reason)
     }
 
     @Test
     fun `끼운 출처의 예외 분류와 원인 보존`() = runBlocking {
         val runtime = IllegalStateException("고장")
-        val e = assertThrowsSuspend<TimeSyncException> { builder(mono, wall, failingSource("a") { runtime }).build().sync() }
+        val e = assertThrowsSuspend<FailedResult> { builder(mono, wall, failingSource("a") { runtime }).build().sync() }
         val f = e.failures.single()
         assertEquals(FailureReason.SOURCE_ERROR, f.reason)
         assertSame(runtime, f.cause)
         assertEquals("a", f.source)
 
-        // 출처 이름 없이 던진 TimeSyncException 은 이름을 붙여 다시 싸고 원래 예외를 cause 로 둔다
-        val bare = TimeSyncException(FailureReason.HTTP_DATE_INVALID, "형식")
-        val wrapped = assertThrowsSuspend<TimeSyncException> { builder(mono, wall, failingSource("b") { bare }).build().sync() }
-            .failures.single()
+        // 결과로 돌려준 실패는 원인을 그대로 두고 출처 이름을 붙인다
+        val io = java.io.IOException("끊김")
+        val wrapped = assertThrowsSuspend<FailedResult> {
+            builder(mono, wall, FailingResultSource("b") { TimeSourceResult.Failure(FailureReason.HTTP_DATE_INVALID, "형식", io) }).build().sync()
+        }.failures.single()
         assertEquals(FailureReason.HTTP_DATE_INVALID, wrapped.reason)
         assertEquals("b", wrapped.source)
-        assertSame(bare, wrapped.cause)
-
-        // 이름이 있으면 그대로
-        val named = TimeSyncException(FailureReason.KISS_OF_DEATH, "c: KoD", null, "c")
-        assertSame(named, assertThrowsSuspend<TimeSyncException> { builder(mono, wall, failingSource("c") { named }).build().sync() }.failures.single())
+        assertEquals("b: 형식", wrapped.message)
+        assertSame(io, wrapped.cause)
+        val plain = assertThrowsSuspend<FailedResult> {
+            builder(mono, wall, FailingResultSource("c") { TimeSourceResult.Failure(FailureReason.KISS_OF_DEATH, "KoD") }).build().sync()
+        }.failures.single()
+        assertEquals(FailureReason.KISS_OF_DEATH, plain.reason)
+        assertEquals(null, plain.cause)
     }
 
     @Test
@@ -276,7 +279,7 @@ class TrustedClockTest {
         val reading = clock.now()
         assertTrue(reading.isDeviceFallback)
         assertEquals(FailureReason.NO_NETWORK, reading.failure!!.reason)
-        assertTrue(reading.failure!!.failures.isEmpty())
+        assertTrue(reading.failure!!.attempts.isEmpty())
         assertEquals(0, source.calls.get())
         online = true
         assertFalse(clock.now().isDeviceFallback)
@@ -305,7 +308,7 @@ class TrustedClockTest {
         clock.now()
         assertEquals(2, source.calls.get())
         // 명시적 sync 는 대기와 무관하다
-        assertThrowsSuspend<TimeSyncException> { clock.sync() }
+        assertThrowsSuspend<FailedResult> { clock.sync() }
         assertEquals(3, source.calls.get())
         fail = false
         assertFalse(clock.sync().isDeviceFallback)
@@ -332,7 +335,7 @@ class TrustedClockTest {
 
     @Test
     fun `KoD 를 보낸 출처는 1시간 쉬고 다음 출처로 넘어간다`() = runBlocking {
-        val kod = failingSource("kod") { TimeSyncException(FailureReason.KISS_OF_DEATH, "kod: RATE", null, "kod") }
+        val kod = FailingResultSource("kod") { TimeSourceResult.Failure(FailureReason.KISS_OF_DEATH, "RATE") }
         val backup = okSource(mono, name = "backup")
         val clock = builder(mono, wall, kod, backup).build()
         assertEquals("backup", clock.sync().sourceName)
@@ -346,15 +349,15 @@ class TrustedClockTest {
 
     @Test
     fun `쉬는 출처만 남으면 KISS_OF_DEATH 로 실패한다`() = runBlocking {
-        val kod = failingSource("kod") { TimeSyncException(FailureReason.KISS_OF_DEATH, "kod: DENY", null, "kod") }
+        val kod = FailingResultSource("kod") { TimeSourceResult.Failure(FailureReason.KISS_OF_DEATH, "DENY") }
         val clock = builder(mono, wall, kod).build()
-        assertEquals(FailureReason.KISS_OF_DEATH, assertThrowsSuspend<TimeSyncException> { clock.sync() }.reason)
-        val skipped = assertThrowsSuspend<TimeSyncException> { clock.sync() }
+        assertEquals(FailureReason.KISS_OF_DEATH, assertThrowsSuspend<FailedResult> { clock.sync() }.reason)
+        val skipped = assertThrowsSuspend<FailedResult> { clock.sync() }
         assertEquals(FailureReason.KISS_OF_DEATH, skipped.reason)
         assertTrue(skipped.failures.single().message!!.contains("더 묻지 않는다"))
         assertEquals(1, kod.calls.get())
         clock.invalidate()
-        assertThrowsSuspend<TimeSyncException> { clock.sync() }
+        assertThrowsSuspend<FailedResult> { clock.sync() }
         assertEquals(2, kod.calls.get())
     }
 

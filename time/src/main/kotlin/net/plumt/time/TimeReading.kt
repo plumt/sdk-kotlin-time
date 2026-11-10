@@ -1,5 +1,6 @@
 package net.plumt.time
 
+import android.annotation.SuppressLint
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -30,26 +31,55 @@ public class TimeReading internal constructor(
     public val ageMillis: Long,
     public val isStale: Boolean,
     public val deviceClockOffsetMillis: Long,
-    public val failure: TimeSyncException?,
+    public val failure: TimeFailure?,
     public val zoneId: String,
 ) {
     /** 기기 시계로 물러난 값이면 `true` — 사용자가 바꾼 시계일 수 있다. */
     public val isDeviceFallback: Boolean get() = origin == TimeOrigin.DEVICE_CLOCK
 
     /** UTC 순간. */
+    @SuppressLint("NewApi") // java.time: API 26 또는 앱의 desugaring — README "API 레벨별 동작"
     public fun toInstant(): Instant = Instant.ofEpochMilli(epochMillis)
 
     /** [zoneId] 시간대의 날짜·시각. */
+    @SuppressLint("NewApi") // java.time: API 26 또는 앱의 desugaring — README "API 레벨별 동작"
     public fun toZonedDateTime(): ZonedDateTime = toZonedDateTime(ZoneId.of(zoneId))
 
     /** [zone] 시간대의 날짜·시각. */
+    @SuppressLint("NewApi") // java.time: API 26 또는 앱의 desugaring — README "API 레벨별 동작"
     public fun toZonedDateTime(zone: ZoneId): ZonedDateTime = toInstant().atZone(zone)
 
     /** [zoneId] 시간대의 벽시계 날짜·시각(시간대 정보 없음). */
+    @SuppressLint("NewApi") // java.time: API 26 또는 앱의 desugaring — README "API 레벨별 동작"
     public fun toLocalDateTime(): LocalDateTime = toZonedDateTime().toLocalDateTime()
 
     /** [zone] 시간대의 벽시계 날짜·시각(시간대 정보 없음). */
+    @SuppressLint("NewApi") // java.time: API 26 또는 앱의 desugaring — README "API 레벨별 동작"
     public fun toLocalDateTime(zone: ZoneId): LocalDateTime = toZonedDateTime(zone).toLocalDateTime()
+
+    override fun equals(other: Any?): Boolean = other is TimeReading &&
+        epochMillis == other.epochMillis &&
+        origin == other.origin &&
+        uncertaintyMillis == other.uncertaintyMillis &&
+        sourceName == other.sourceName &&
+        ageMillis == other.ageMillis &&
+        isStale == other.isStale &&
+        deviceClockOffsetMillis == other.deviceClockOffsetMillis &&
+        failure == other.failure &&
+        zoneId == other.zoneId
+
+    override fun hashCode(): Int {
+        var h = epochMillis.hashCode()
+        h = 31 * h + origin.hashCode()
+        h = 31 * h + (uncertaintyMillis?.hashCode() ?: 0)
+        h = 31 * h + (sourceName?.hashCode() ?: 0)
+        h = 31 * h + ageMillis.hashCode()
+        h = 31 * h + isStale.hashCode()
+        h = 31 * h + deviceClockOffsetMillis.hashCode()
+        h = 31 * h + (failure?.hashCode() ?: 0)
+        h = 31 * h + zoneId.hashCode()
+        return h
+    }
 
     override fun toString(): String = buildString {
         append("TimeReading(").append(epochMillis).append(", ").append(origin)

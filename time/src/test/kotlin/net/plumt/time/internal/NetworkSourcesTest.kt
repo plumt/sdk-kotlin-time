@@ -3,13 +3,11 @@ package net.plumt.time.internal
 import net.plumt.time.FailureReason
 import net.plumt.time.FakeHttpServer
 import net.plumt.time.FakeNtpServer
-import net.plumt.time.MonotonicClock
 import net.plumt.time.NtpReply
 import net.plumt.time.SERVER_TIME
 import net.plumt.time.TimeOrigin
 import net.plumt.time.TimeQuery
 import net.plumt.time.TimeSources
-import net.plumt.time.TimeSyncException
 import net.plumt.time.assertThrows
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -24,10 +22,12 @@ import java.net.UnknownHostException
 /** 로컬 가짜 서버로 실제 소켓 경로를 시험한다. */
 class NetworkSourcesTest {
 
-    private val query = TimeQuery(timeoutMillis = 1_000, monotonicClock = MonotonicClock.system())
-    private val fastTimeout = TimeQuery(timeoutMillis = 200, monotonicClock = MonotonicClock.system())
+    private val query = TimeQuery(timeoutMillis = 1_000, monotonicClock = SystemMonotonicClock)
+    private val fastTimeout = TimeQuery(timeoutMillis = 200, monotonicClock = SystemMonotonicClock)
 
-    private fun ntp(server: FakeNtpServer) = TimeSources.ntp("127.0.0.1", server.port)
+    private fun ntp(server: FakeNtpServer) = TimeSources.ntp("127.0.0.1", server.port) as SampleSource
+
+    private fun cleartext(url: String) = TimeSources.httpDateAllowingCleartext(url) as SampleSource
 
     // ---- NTP ----
 
@@ -38,7 +38,7 @@ class NetworkSourcesTest {
             assertEquals("127.0.0.1:${server.port}", source.name)
             assertEquals(TimeOrigin.NTP, source.origin)
             val before = query.monotonicClock.elapsedMillis()
-            val sample = source.query(query)
+            val sample = source.sample(query)
             assertTrue(sample.anchorElapsedMillis >= before)
             assertTrue(sample.serverEpochMillis in SERVER_TIME..SERVER_TIME + sample.roundTripMillis)
             assertTrue(sample.uncertaintyMillis >= 1)
@@ -58,14 +58,14 @@ class NetworkSourcesTest {
     @Test
     fun `NTP 응답 없음은 SocketTimeoutException`() {
         FakeNtpServer { null }.use { server ->
-            assertThrows<SocketTimeoutException> { ntp(server).query(fastTimeout) }
+            assertThrows<SocketTimeoutException> { ntp(server).sample(fastTimeout) }
         }
     }
 
     @Test
     fun `NTP KoD 는 KISS_OF_DEATH`() {
         FakeNtpServer { NtpReply(stratum = 0, referenceId = "RATE".toByteArray()).build(it) }.use { server ->
-            val e = assertThrows<TimeSyncException> { ntp(server).query(query) }
+            val e = assertThrows<SyncError> { ntp(server).sample(query) }
             assertEquals(FailureReason.KISS_OF_DEATH, e.reason)
             assertEquals("127.0.0.1:${server.port}", e.source)
         }
@@ -74,7 +74,7 @@ class NetworkSourcesTest {
     @Test
     fun `NTP 원본 시각 위조는 INVALID_RESPONSE`() {
         FakeNtpServer { NtpReply(originateOverride = ByteArray(8) { 7 }).build(it) }.use { server ->
-            assertEquals(FailureReason.INVALID_RESPONSE, assertThrows<TimeSyncException> { ntp(server).query(query) }.reason)
+            assertEquals(FailureReason.INVALID_RESPONSE, assertThrows<SyncError> { ntp(server).sample(query) }.reason)
         }
     }
 
@@ -82,7 +82,7 @@ class NetworkSourcesTest {
     fun `NTP 잘린 응답과 빈 응답은 요청 바이트를 응답으로 읽지 않고 INVALID_RESPONSE`() {
         listOf(20, 0).forEach { length ->
             FakeNtpServer { NtpReply(length = length).build(it) }.use { server ->
-                val e = assertThrows<TimeSyncException> { ntp(server).query(query) }
+                val e = assertThrows<SyncError> { ntp(server).sample(query) }
                 assertEquals("길이 $length", FailureReason.INVALID_RESPONSE, e.reason)
                 assertTrue(e.message!!.contains(": $length"))
             }
@@ -92,14 +92,14 @@ class NetworkSourcesTest {
     @Test
     fun `NTP 호스트 이름 조회 실패는 UnknownHostException`() {
         val source = NtpTimeSource("nowhere.invalid", 123, resolver = { throw UnknownHostException(it) })
-        assertThrows<UnknownHostException> { source.query(query) }
+        assertThrows<UnknownHostException> { source.sample(query) }
     }
 
     @Test
     fun `NTP 난수가 0 이면 1 로 바꾼다 — 기본 난수 공급`() {
         FakeNtpServer { NtpReply().build(it) }.use { server ->
             val source = NtpTimeSource("127.0.0.1", server.port, InetAddress::getByName)
-            source.query(query)
+            source.sample(query)
             val request = server.requests.single()
             assertTrue((40 until 48).any { request[it] != 0.toByte() })
         }
@@ -110,9 +110,9 @@ class NetworkSourcesTest {
     @Test
     fun `HTTP 정상 — HEAD 와 캐시 끄기 헤더로 묻고 Date 에 반 초와 왕복 절반을 더한다`() {
         FakeHttpServer { FakeHttpServer.response("Date: Tue, 03 Nov 2026 12:00:00 GMT") }.use { server ->
-            val source = TimeSources.httpDate(server.url, allowCleartext = true)
+            val source = cleartext(server.url)
             assertEquals(TimeOrigin.HTTP_DATE, source.origin)
-            val sample = source.query(query)
+            val sample = source.sample(query)
             assertEquals(SERVER_TIME + 500 + sample.roundTripMillis / 2, sample.serverEpochMillis)
             assertEquals(500 + (sample.roundTripMillis + 1) / 2 + 1, sample.uncertaintyMillis)
             val request = server.requests.single()
@@ -126,7 +126,7 @@ class NetworkSourcesTest {
         FakeHttpServer {
             "HTTP/1.1 301 Moved\r\nLocation: http://127.0.0.1:1/\r\nDate: Tue, 03 Nov 2026 12:00:00 GMT\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         }.use { server ->
-            val sample = TimeSources.httpDate(server.url, allowCleartext = true).query(query)
+            val sample = cleartext(server.url).sample(query)
             assertTrue(sample.serverEpochMillis >= SERVER_TIME + 500)
             assertEquals(1, server.requests.size)
         }
@@ -135,7 +135,7 @@ class NetworkSourcesTest {
     @Test
     fun `HTTP Date 없음은 HTTP_DATE_MISSING`() {
         FakeHttpServer { FakeHttpServer.response("Server: fake") }.use { server ->
-            val e = assertThrows<TimeSyncException> { TimeSources.httpDate(server.url, true).query(query) }
+            val e = assertThrows<SyncError> { cleartext(server.url).sample(query) }
             assertEquals(FailureReason.HTTP_DATE_MISSING, e.reason)
             assertEquals(server.url, e.source)
         }
@@ -144,7 +144,7 @@ class NetworkSourcesTest {
     @Test
     fun `HTTP Date 파싱 실패는 HTTP_DATE_INVALID 이고 헤더 앞부분을 메시지에 담는다`() {
         FakeHttpServer { FakeHttpServer.response("Date: 2026-11-03T12:00:00Z") }.use { server ->
-            val e = assertThrows<TimeSyncException> { TimeSources.httpDate(server.url, true).query(query) }
+            val e = assertThrows<SyncError> { cleartext(server.url).sample(query) }
             assertEquals(FailureReason.HTTP_DATE_INVALID, e.reason)
             assertTrue(e.message!!.contains("2026-11-03T12:00:00Z"))
         }
@@ -156,14 +156,14 @@ class NetworkSourcesTest {
             Thread.sleep(1_000)
             FakeHttpServer.response("Date: Tue, 03 Nov 2026 12:00:00 GMT")
         }.use { server ->
-            assertThrows<SocketTimeoutException> { TimeSources.httpDate(server.url, true).query(fastTimeout) }
+            assertThrows<SocketTimeoutException> { cleartext(server.url).sample(fastTimeout) }
         }
     }
 
     @Test
     fun `HTTP 연결 거부는 ConnectException`() {
         val port = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
-        assertThrows<ConnectException> { TimeSources.httpDate("http://127.0.0.1:$port/", true).query(query) }
+        assertThrows<ConnectException> { cleartext("http://127.0.0.1:$port/").sample(query) }
     }
 
     @Test
@@ -179,7 +179,7 @@ class NetworkSourcesTest {
             override fun getHeaderField(name: String?): String? = null
         }
         val source = HttpDateTimeSource("x", URL("http://127.0.0.1/"), open = { connection })
-        assertThrows<TimeSyncException> { source.query(query) }
+        assertThrows<SyncError> { source.sample(query) }
         assertTrue(disconnected)
     }
 }

@@ -2,7 +2,6 @@ package net.plumt.time.internal
 
 import net.plumt.time.FailureReason
 import net.plumt.time.TimeSample
-import net.plumt.time.TimeSyncException
 
 /**
  * SNTP 패킷(RFC 5905 48바이트 헤더) 만들기·읽기. 소켓을 모르는 순수 함수라 바이트 배열만으로 시험한다.
@@ -52,7 +51,7 @@ internal object Ntp {
      *
      * @param roundTripMillis 요청 직전 ~ 응답 직후 단조 시계 차이
      * @param anchorElapsedMillis 응답 직후 단조 시계 값
-     * @throws TimeSyncException 응답이 틀렸을 때(원인별)
+     * @throws SyncError 응답이 틀렸을 때(원인별)
      */
     fun parse(
         source: String,
@@ -63,7 +62,7 @@ internal object Ntp {
         anchorElapsedMillis: Long,
     ): TimeSample {
         fun fail(reason: FailureReason, message: String): Nothing =
-            throw TimeSyncException(reason, "$source: $message", null, source)
+            throw SyncError(reason, "$source: $message", null, source)
 
         if (length < PACKET_SIZE) fail(FailureReason.INVALID_RESPONSE, "응답이 ${PACKET_SIZE}바이트보다 짧다: $length")
         val first = packet[0].toInt() and BYTE_MASK

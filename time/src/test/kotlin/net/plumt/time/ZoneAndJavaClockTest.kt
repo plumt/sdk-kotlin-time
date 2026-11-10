@@ -40,10 +40,10 @@ class ZoneAndJavaClockTest {
     fun `시간대 ID 문자열 — java time 없이`() = runBlocking {
         val utc = builder(mono, wall, okSource(mono)).zone("UTC").build()
         assertEquals("UTC", utc.now().zoneId)
-        val e = assertThrows<IllegalArgumentException> { TrustedClock.builder().zone("Mars/Base") }
+        val e = assertThrows<IllegalArgumentException> { TestBuilder().zone("Mars/Base") }
         assertTrue(e.message!!.contains("Mars/Base"))
-        assertThrows<IllegalArgumentException> { TrustedClock.builder().zone("") }
-        assertThrows<IllegalArgumentException> { TrustedClock.builder().zone("asia/seoul") }
+        assertThrows<IllegalArgumentException> { TestBuilder().zone("") }
+        assertThrows<IllegalArgumentException> { TestBuilder().zone("asia/seoul") }
         Unit
     }
 
@@ -61,27 +61,27 @@ class ZoneAndJavaClockTest {
     }
 
     @Test
-    fun `asJavaClock — 동기화가 없으면 정책 DEVICE_CLOCK 은 기기 시계, 그 밖은 NOT_SYNCED`() {
+    fun `asJavaClock — 동기화가 없으면 정책 DEVICE_CLOCK 은 기기 시계, 그 밖은 DateTimeException`() {
         val device = builder(mono, wall, okSource(mono)).build().asJavaClock()
         assertEquals(wall.now, device.millis())
-        listOf(FallbackPolicy.LAST_SYNC_ONLY, FallbackPolicy.NONE).forEach { policy ->
+        listOf(FallbackPolicy.LastSyncOnly, FallbackPolicy.None).forEach { policy ->
             val strict = builder(mono, wall, okSource(mono)).fallbackPolicy(policy).build().asJavaClock()
-            val e = assertThrows<TimeSyncException> { strict.millis() }
-            assertEquals(FailureReason.NOT_SYNCED, e.reason)
+            val e = assertThrows<java.time.DateTimeException> { strict.millis() }
+            assertTrue(e.message!!.contains("sync()"))
         }
     }
 
     @Test
     fun `asJavaClock — 지난 동기화는 NONE 만 막는다`() = runBlocking {
-        listOf(FallbackPolicy.DEVICE_CLOCK, FallbackPolicy.LAST_SYNC_ONLY, FallbackPolicy.NONE).forEach { policy ->
+        listOf(FallbackPolicy.DeviceClock, FallbackPolicy.LastSyncOnly, FallbackPolicy.None).forEach { policy ->
             val m = FakeMonotonic()
             val clock = builder(m, wall, okSource(m)).fallbackPolicy(policy)
                 .refreshIntervalMillis(1_000).maxAgeMillis(10_000).build()
             clock.sync()
             m.advance(5_000)
             val java = clock.asJavaClock()
-            if (policy == FallbackPolicy.NONE) {
-                assertEquals(FailureReason.NOT_SYNCED, assertThrows<TimeSyncException> { java.millis() }.reason)
+            if (policy == FallbackPolicy.None) {
+                assertThrows<java.time.DateTimeException> { java.millis() }
             } else {
                 assertEquals(SERVER_TIME + 5_000, java.millis())
             }

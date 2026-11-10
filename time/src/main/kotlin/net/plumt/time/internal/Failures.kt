@@ -1,22 +1,39 @@
 package net.plumt.time.internal
 
 import net.plumt.time.FailureReason
-import net.plumt.time.TimeSyncException
+import net.plumt.time.TimeFailure
 import java.io.IOException
 import java.net.NoRouteToHostException
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
-/** 출처가 던진 예외를 원인별 [TimeSyncException] 으로 바꾼다. 원래 예외는 cause 로 남긴다. */
+/**
+ * 라이브러리 안에서만 쓰는 실패 신호. 경계([DefaultTrustedClock])에서 공개 [TimeFailure] 로 바뀐다.
+ * 공개 API 로는 던지지 않는다.
+ */
+internal class SyncError(
+    val reason: FailureReason,
+    message: String,
+    cause: Throwable? = null,
+    val source: String? = null,
+    val failures: List<SyncError> = emptyList(),
+) : Exception(message, cause) {
+    /** 공개 값. 같은 실패는 같은 인스턴스를 돌려준다. */
+    val failure: TimeFailure by lazy {
+        TimeFailure(reason, message ?: reason.name, source, cause, failures.map { it.failure })
+    }
+}
+
+/** 출처가 던진 예외를 원인별 [SyncError] 으로 바꾼다. 원래 예외는 cause 로 남긴다. */
 internal object Failures {
 
-    fun classify(error: Throwable, source: String): TimeSyncException {
-        if (error is TimeSyncException) {
+    fun classify(error: Throwable, source: String): SyncError {
+        if (error is SyncError) {
             return if (error.source != null) {
                 error
             } else {
-                TimeSyncException(error.reason, error.message ?: error.reason.name, error, source)
+                SyncError(error.reason, error.message ?: error.reason.name, error.cause, source)
             }
         }
         val reason = when (error) {
@@ -28,15 +45,15 @@ internal object Failures {
             else -> FailureReason.SOURCE_ERROR
         }
         val detail = error.message?.take(MAX_DETAIL) ?: error.javaClass.simpleName
-        return TimeSyncException(reason, "$source: $detail", error, source)
+        return SyncError(reason, "$source: $detail", error, source)
     }
 
     /** 여러 출처를 모두 시도한 끝의 실패. 모든 시도의 원인이 같으면 그 원인, 섞이면 ALL_SOURCES_FAILED. */
-    fun aggregate(failures: List<TimeSyncException>): TimeSyncException {
+    fun aggregate(failures: List<SyncError>): SyncError {
         val reasons = failures.map { it.reason }.toSet()
         val reason = reasons.singleOrNull() ?: FailureReason.ALL_SOURCES_FAILED
         val summary = failures.joinToString(", ") { "${it.source}=${it.reason}" }
-        return TimeSyncException(reason, "모든 시각 출처가 실패했다: $summary", failures.firstOrNull(), null, failures.toList())
+        return SyncError(reason, "모든 시각 출처가 실패했다: $summary", null, null, failures.toList())
     }
 
     private fun isNetworkUnreachable(error: SocketException): Boolean {

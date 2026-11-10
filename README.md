@@ -1,31 +1,25 @@
 # sdk-kotlin-time
 
-사용자가 기기 시계를 바꿔도 흔들리지 않는 **정확한 현재 시각**을 얻는 Kotlin 라이브러리다.
-NTP → HTTP `Date` → (허락하면) 기기 시계 순서로 시각을 얻는다. 한 번 맞춘 값은 **단조 시계** 기준으로 보관하므로
-그 뒤에는 네트워크 없이 계산만 한다. 결과에는 출처·오차 추정·기기 시계로 물러났는지가 함께 담긴다.
+사용자가 기기 시계를 바꿔도 흔들리지 않는 **정확한 현재 시각**을 얻는 Android 라이브러리다.
+NTP → HTTP `Date` → (허락하면) 기기 시계 순서로 시각을 얻는다. 한 번 맞춘 값은 **단조 시계**(`elapsedRealtime`) 기준으로
+보관하므로 그 뒤에는 네트워크 없이 계산만 한다. 결과에는 출처·오차 추정·기기 시계로 물러났는지가 함께 담긴다.
 
-| 모듈 | 좌표 | 형태 | 상태 |
-|---|---|---|---|
-| `time` | `net.plumt.time:time` | jar(순수 JVM) | 0.0.1 |
-| `time-android` | `net.plumt.time:time-android` | aar | 0.0.1 |
-
-`time` 은 Android·서버·데스크톱 어디서나 돈다. Android 앱은 `time-android` 를 함께 쓴다 — 기기가 잠든 동안에도
-흐르는 `elapsedRealtime` 단조 시계, 부팅 식별, 연결 상태, 앱 재시작 뒤에도 오프셋을 잇는 저장소를 끼워 준다.
+| 좌표 | 형태 | 상태 |
+|---|---|---|
+| `net.plumt.time:time` | aar | 0.1.0 |
 
 ## 설치
 
 ```kotlin
 dependencies {
-    implementation("net.plumt.time:time-android:0.0.1")   // Android 앱 (time 을 함께 가져온다)
-    // implementation("net.plumt.time:time:0.0.1")        // 순수 JVM
+    implementation("net.plumt.time:time:0.1.0")
 }
 ```
 
-- 최소 요구: JVM 11 바이트코드, Android minSdk 23. 런타임 의존은 `kotlin-stdlib` 와 `kotlinx-coroutines-core` 뿐이다.
-- `time-android` 는 `INTERNET`·`ACCESS_NETWORK_STATE` 권한을 매니페스트 병합으로 넣는다.
-- `epochMillis` 는 모든 API 레벨에서 쓴다. `java.time` 변환(`toInstant`·`toZonedDateTime`·`toLocalDateTime`·`asJavaClock`)은
-  API 26 이상이거나 앱이 [core library desugaring](https://developer.android.com/studio/write/java8-support#library-desugaring) 을 켰을 때만 부른다.
-  라이브러리 내부(NTP·HTTP 날짜 해석)는 `java.time` 을 쓰지 않는다.
+- 최소 요구: Android minSdk 23, JVM 11 바이트코드. 런타임 의존은 `kotlin-stdlib`·`kotlinx-coroutines-android`·`androidx.annotation` 뿐이다.
+- 매니페스트 병합으로 `INTERNET`(NTP·HTTPS 조회)·`ACCESS_NETWORK_STATE`(조회 전 연결 판단) 권한을 넣는다. 그 밖의 권한·컴포넌트는 넣지 않는다.
+- ProGuard·R8 규칙을 따로 적지 않는다(리플렉션·직렬화를 쓰지 않는다).
+- `epochMillis` 는 모든 API 레벨에서 쓴다. `java.time` 변환은 아래 [API 레벨별 동작](#api-레벨별-동작) 을 본다.
 
 ## 사용 예
 
@@ -33,38 +27,53 @@ dependencies {
 
 ```kotlin
 // 앱 전체에서 하나만 만든다(Application 이나 DI 싱글턴)
-val clock: TrustedClock = AndroidTime.clockBuilder(context).build()   // 한국 서버, Asia/Seoul
+val clock: TrustedClock = TrustedClock.create(context)   // 한국 서버, Asia/Seoul
 
 // 앱 시작 때 한 번 맞춰 두면 이후 now() 는 네트워크를 타지 않는다
-scope.launch { runCatching { clock.sync() } }
+scope.launch { clock.sync() }
 
-val reading = clock.now()                // suspend. 메인 스레드에서 불러도 된다
-reading.epochMillis                      // UTC epoch 밀리초
-reading.toLocalDateTime()                // 2026-11-03T21:00 (서울)
-reading.origin                           // NTP · HTTP_DATE · CUSTOM · DEVICE_CLOCK
-reading.uncertaintyMillis                // 오차 추정(±ms). 기기 시계면 null
-reading.deviceClockOffsetMillis          // 이 시각 − 기기 시계. 사용자가 시계를 바꿨는지 볼 때
+when (val result = clock.now()) {         // suspend. 메인 스레드에서 불러도 된다
+    is TimeResult.Success -> {
+        val reading = result.reading
+        reading.epochMillis               // UTC epoch 밀리초
+        reading.toLocalDateTime()         // 2026-11-03T21:00 (서울)
+        reading.origin                    // NTP · HTTP_DATE · CUSTOM · DEVICE_CLOCK
+        reading.uncertaintyMillis         // 오차 추정(±ms). 기기 시계면 null
+        reading.deviceClockOffsetMillis   // 이 시각 − 기기 시계. 사용자가 시계를 바꿨는지 볼 때
+    }
+    is TimeResult.Failure -> showRetry(result.failure.reason)
+}
+```
+
+### 콜백(코루틴 없이·Java)
+
+```kotlin
+val handle = clock.now { result ->        // 메인 스레드에서 한 번 온다
+    if (result is TimeResult.Success) render(result.reading)
+}
+handle.cancel()                           // 화면이 사라지면 취소 — 콜백을 부르지 않는다
+```
+
+```java
+TimeCallHandle handle = clock.now(result -> { /* 메인 스레드 */ });
 ```
 
 ### 해외 서비스·다른 시간대
 
 ```kotlin
-val clock = AndroidTime.clockBuilder(context)
+val config = TimeConfig.builder()
     .ntpServers(TimeServers.GLOBAL_NTP)          // time.cloudflare.com, time.google.com, pool.ntp.org
     .httpDateUrls(TimeServers.GLOBAL_HTTP)
-    .zone(ZoneId.of("America/New_York"))        // 또는 .zone("America/New_York") — java.time 없이
+    .zone("America/New_York")                    // 또는 zone(ZoneId.of(...)) — API 26 미만은 desugaring
     .build()
-
-val reading = clock.now()
-reading.toLocalDateTime()                        // 뉴욕 벽시계
-reading.toZonedDateTime(ZoneId.of("Europe/London"))   // 결과마다 다른 시간대로도
+val clock = TrustedClock.create(context, config)
 ```
 
 ### 실패 처리
 
 ```kotlin
-// 1) 기본 정책(DEVICE_CLOCK): 실패해도 값은 나온다. 믿을 수 있는지 확인한다
-val r = clock.now()
+// 1) 기본 정책(DeviceClock): 실패해도 값은 나온다. 믿을 수 있는지 확인한다
+val r = (clock.now() as TimeResult.Success).reading
 if (r.isDeviceFallback) {
     // 사용자가 바꿀 수 있는 기기 시계다. 출석·쿠폰 만료 같은 판정에 쓰지 않는다
     log("기기 시계 사용: ${r.failure?.reason}")
@@ -73,26 +82,38 @@ if (r.isDeviceFallback) {
 }
 
 // 2) 기기 시계를 절대 쓰지 않는 판정용 시계
-val strict = AndroidTime.clockBuilder(context).fallbackPolicy(FallbackPolicy.NONE).build()
-try {
-    val now = strict.now()
-} catch (e: TimeSyncException) {
-    when (e.reason) {
-        FailureReason.NO_NETWORK -> showOffline()
-        FailureReason.TIMEOUT -> showRetry()
-        FailureReason.KISS_OF_DEATH, FailureReason.INVALID_STRATUM,
-        FailureReason.SERVER_UNSYNCHRONIZED, FailureReason.INVALID_RESPONSE,
-        FailureReason.ROUND_TRIP_TOO_LONG -> showServerProblem()
-        else -> showRetry()
+val strict = TrustedClock.create(context, TimeConfig.builder().fallbackPolicy(FallbackPolicy.None).build())
+when (val result = strict.now()) {
+    is TimeResult.Success -> judge(result.reading)
+    is TimeResult.Failure -> {
+        val reason = result.failure.reason
+        when (reason) {
+            FailureReason.NO_NETWORK -> showOffline()
+            FailureReason.TIMEOUT -> showRetry()
+            else -> showServerProblem()            // FailureReason 은 값이 늘 수 있다 — else 를 둔다
+        }
+        result.failure.attempts.forEach { log("${it.source}: ${it.reason}") }   // 출처별 원인
     }
-    e.failures.forEach { log("${it.source}: ${it.reason}") }   // 출처별 원인
 }
 ```
+
+`TimeResult`·`FallbackPolicy` 는 닫힌 집합(`sealed`)이라 `else` 없이 다룬다. `FailureReason`·`TimeOrigin` 은 값이 늘 수 있는
+상수 클래스라 `else` 를 둔다. 오류 전체는 [ERRORS.md](ERRORS.md).
+
+### 단위 테스트
+
+```kotlin
+val clock = FakeTrustedClock(1_793_707_200_000L)   // 기기·네트워크 없이
+clock.advanceBy(60_000)
+clock.failWith(FailureReason.NO_NETWORK)          // 이후 now()·sync() 가 Failure
+```
+
+`FakeTrustedClock` 은 같은 아티팩트에 들어 있다. 콜백 형태는 부른 스레드에서 바로 결과를 준다.
 
 ## NTP 서버 지역과 시간대는 별개다
 
 NTP 서버는 어느 나라에 있든 **UTC** 를 준다. 서버를 한국에 가까운 곳으로 고르는 이유는 왕복 지연이 짧아 오차가 작기
-때문이지, 한국 시각을 받기 위해서가 아니다. 결과를 몇 시로 보여 줄지는 `zone(...)` 이 정하고, 서버 목록과 무관하다.
+때문이지, 한국 시각을 받기 위해서가 아니다. 결과를 몇 시로 보여 줄지는 `TimeConfig.Builder.zone(...)` 이 정하고, 서버 목록과 무관하다.
 
 | 하고 싶은 것 | 바꿀 것 |
 |---|---|
@@ -132,9 +153,9 @@ NTP 서버는 어느 나라에 있든 **UTC** 를 준다. 서버를 한국에 �
 
 | `FallbackPolicy` | 유효한 동기화 없음 + 새 동기화 실패 시 |
 |---|---|
-| `DEVICE_CLOCK`(기본) | 지난 동기화 → 기기 시계(`isDeviceFallback = true`) |
-| `LAST_SYNC_ONLY` | 지난 동기화까지만. 없으면 `TimeSyncException` |
-| `NONE` | 바로 `TimeSyncException` |
+| `DeviceClock`(기본) | 지난 동기화 → 기기 시계(`isDeviceFallback = true`) |
+| `LastSyncOnly` | 지난 동기화까지만. 없으면 `TimeResult.Failure` |
+| `None` | 바로 `TimeResult.Failure` |
 
 오류 전체는 [ERRORS.md](ERRORS.md).
 
@@ -147,18 +168,40 @@ val instant = kotlinx.datetime.Instant.fromEpochMilliseconds(reading.epochMillis
 val local = instant.toLocalDateTime(kotlinx.datetime.TimeZone.of(reading.zoneId))
 ```
 
+## API 레벨별 동작
+
+| API | 동작 |
+|---|---|
+| 23 | 부팅을 식별할 수 없다(`Settings.Global.BOOT_COUNT` 없음). 같은 프로세스 안에서는 보관한 값을 쓰지만 앱 재시작 뒤에는 되살리지 않고 다시 동기화한다 |
+| 24 | `BOOT_COUNT` 로 부팅을 가려 앱 재시작 뒤에도 같은 부팅이면 동기화 없이 정확한 시각을 낸다 |
+| 26 | `java.time`(`toInstant`·`toZonedDateTime`·`toLocalDateTime`·`asJavaClock`·`zone(ZoneId)`)을 desugaring 없이 쓴다. 25 이하는 앱이 [core library desugaring](https://developer.android.com/studio/write/java8-support#library-desugaring) 을 켜야 한다. `epochMillis`·`zoneId` 와 내부 계산(NTP·HTTP 날짜 해석)은 `java.time` 을 쓰지 않는다 |
+| 28 | 기본 정책이 평문 HTTP 를 막는다. 라이브러리는 기본으로 `https` 만 쓰므로 영향이 없다(`httpDateAllowingCleartext` 를 쓰면 앱의 네트워크 보안 설정이 필요하다) |
+| 36 | `compileSdk`·검증 기준. 동작 차이 없음 |
+
+새 Android 버전이 나오면 이 표부터 고친다.
+
+## 알려진 한계
+
+- SNTP 는 인증이 없다(NTS 미지원). 네트워크를 장악한 공격자(DNS·라우팅)는 NTP 응답을 위조할 수 있다 — 중요한 판정은 서버가 서버 시각으로 한다.
+- 루팅·후킹한 기기에서는 앱 프로세스 자체를 바꿀 수 있어 막지 못한다.
+- API 23 은 앱 재시작마다 다시 동기화한다(위 표).
+- HTTP `Date` 출처는 초 단위라 오차가 0.5초 이상이다. UDP 123 이 막힌 망에서만 쓰인다.
+- 단조 시계의 주파수 편차를 100ppm 으로 가정해 오차 추정에 더한다. 실제 편차가 더 큰 기기에서는 오차 추정이 작게 나온다.
+- 리플렉션·비공개 API 는 쓰지 않는다. `BOOT_COUNT` 를 못 읽으면 부팅 ID 를 `null` 로 두고 재시작 뒤 되살리지 않는다(폴백).
+- 콜백 형태의 진행 중 호출은 프로세스와 함께 사라진다. 결과를 저장하지 않으므로 화면 회전 뒤에는 다시 부른다(조회는 한 번만 나가고 결과를 나눠 받는다).
+
 ## 확장
 
 | 지점 | 무엇을 바꾸나 | 기본 |
 |---|---|---|
-| `TimeSource` + `sources(...)` | 시각 출처(사내 서버·다른 프로토콜). `TimeSources.ntp(host, port)`·`TimeSources.httpDate(url)` 를 섞어도 된다 | NTP 3개 + HTTPS 2개 |
-| `SyncStateStore` | 오프셋 저장소 | JVM: 메모리, Android: SharedPreferences |
-| `MonotonicClock` | 단조 시계·부팅 ID | JVM: `System.nanoTime`, Android: `elapsedRealtime` + `BOOT_COUNT` |
+| `TimeSource` + `TimeConfig.Builder.sources(...)` | 시각 출처(사내 서버·다른 프로토콜). `TimeSources.ntp(host, port)`·`TimeSources.httpDate(url)` 를 섞어도 된다 | NTP 3개 + HTTPS 2개 |
+| `SyncStateStore` | 오프셋 저장소(`SyncStateStore.inMemory()`·`sharedPreferences(context, name)`) | SharedPreferences `net.plumt.time.sync` |
+| `MonotonicClock` | 단조 시계·부팅 ID(시험용) | `elapsedRealtime` + `BOOT_COUNT` |
 | `WallClock` | 기기 시계(폴백·차이 계산) | `System.currentTimeMillis` |
-| `NetworkMonitor` | 조회 전 연결 판단 | JVM: 늘 연결, Android: `ConnectivityManager` |
+| `NetworkMonitor` | 조회 전 연결 판단(`NetworkMonitor.assumeAvailable()` 은 판단을 조회에 맡긴다) | `ConnectivityManager` |
 | `dispatcher(...)` | 블로킹 조회를 돌릴 디스패처 | `Dispatchers.IO` |
 
-`TimeSource.query` 는 블로킹이다. 실패는 `TimeSyncException` 에 원인을 담아 던지고, 그 밖의 예외는 라이브러리가 원인별로 나눈다.
+`TimeSource.query` 는 블로킹이다. 예상되는 실패는 `TimeSourceResult.Failure(reason, message)` 로 돌려주고, 던진 예외(`IOException` 등)는 라이브러리가 원인별로 나눈다.
 
 ## 위협 모델
 
@@ -178,12 +221,13 @@ val local = instant.toLocalDateTime(kotlinx.datetime.TimeZone.of(reading.zoneId)
 
 ## 스레드
 
-모든 공개 함수는 스레드 안전하다. `now()`·`sync()` 는 suspend 이고 소켓 조회는 지정한 디스패처에서 돈다. `peek()`·`asJavaClock()` 은
-블로킹하지 않는다. 조회 도중 코루틴이 취소되면 진행 중인 소켓 대기(최대 `timeoutMillis`)가 끝난 뒤 취소되고 그 결과는 버린다.
+모든 공개 함수는 스레드 안전하다. `now()`·`sync()` 는 suspend 이고 소켓 조회는 지정한 디스패처에서 돈다. 콜백 형태는 결과를
+메인 스레드에서 준다. `peek()`·`asJavaClock()` 은 블로킹하지 않는다. 조회 도중 코루틴이 취소되면 진행 중인 소켓 대기(최대 `timeoutMillis`)가 끝난 뒤 취소되고 그 결과는 버린다.
 
 ## 버전
 
-모듈별 SemVer. 각 모듈 `gradle.properties` 의 `VERSION_NAME`, 태그는 `<모듈>-v<버전>`(예: `time-v0.0.1`, `time-android-v0.0.1`).
+SemVer. `time/gradle.properties` 의 `VERSION_NAME`, 태그는 `time-v<버전>`(예: `time-v0.1.0`). 1.0 전에는 마이너 상승이 호환을 깨뜨릴 수 있고
+바뀐 점은 [CHANGELOG.md](CHANGELOG.md) 의 "깨짐" 에 적는다.
 공개 API 는 `.api` 파일로 고정하고 `./gradlew build` 가 `apiCheck` 로 검사한다.
 
 ## 라이선스

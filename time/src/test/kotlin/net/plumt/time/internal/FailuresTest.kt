@@ -1,7 +1,6 @@
 package net.plumt.time.internal
 
 import net.plumt.time.FailureReason
-import net.plumt.time.TimeSyncException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -56,7 +55,7 @@ class FailuresTest {
     @Test
     fun `묶음 — 원인이 하나면 그 원인`() {
         listOf(FailureReason.TIMEOUT, FailureReason.KISS_OF_DEATH, FailureReason.HTTP_DATE_INVALID).forEach { r ->
-            val e = Failures.aggregate(listOf(TimeSyncException(r, "a", null, "a"), TimeSyncException(r, "b", null, "b")))
+            val e = Failures.aggregate(listOf(SyncError(r, "a", null, "a"), SyncError(r, "b", null, "b")))
             assertEquals(r, e.reason)
         }
     }
@@ -65,8 +64,8 @@ class FailuresTest {
     fun `묶음 — 시간 초과와 연결 없음이 섞이면 ALL_SOURCES_FAILED`() {
         val e = Failures.aggregate(
             listOf(
-                TimeSyncException(FailureReason.TIMEOUT, "a", null, "a"),
-                TimeSyncException(FailureReason.NO_NETWORK, "b", null, "b"),
+                SyncError(FailureReason.TIMEOUT, "a", null, "a"),
+                SyncError(FailureReason.NO_NETWORK, "b", null, "b"),
             ),
         )
         assertEquals(FailureReason.ALL_SOURCES_FAILED, e.reason)

@@ -4,8 +4,6 @@ import net.plumt.time.FailureReason
 import net.plumt.time.TimeOrigin
 import net.plumt.time.TimeQuery
 import net.plumt.time.TimeSample
-import net.plumt.time.TimeSource
-import net.plumt.time.TimeSyncException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -20,11 +18,11 @@ internal class HttpDateTimeSource(
     override val name: String,
     private val url: URL,
     private val open: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection },
-) : TimeSource {
+) : SampleSource() {
 
     override val origin: TimeOrigin = TimeOrigin.HTTP_DATE
 
-    override fun query(request: TimeQuery): TimeSample {
+    override fun sample(request: TimeQuery): TimeSample {
         val connection = open(url).apply {
             requestMethod = "HEAD"
             connectTimeout = request.timeoutMillis
@@ -42,9 +40,9 @@ internal class HttpDateTimeSource(
             connection.responseCode
             val receivedAt = clock.elapsedMillis()
             val header = connection.getHeaderField("Date")
-                ?: throw TimeSyncException(FailureReason.HTTP_DATE_MISSING, "$name: 응답에 Date 헤더가 없다", null, name)
+                ?: throw SyncError(FailureReason.HTTP_DATE_MISSING, "$name: 응답에 Date 헤더가 없다", null, name)
             val date = HttpDates.parse(header)
-                ?: throw TimeSyncException(
+                ?: throw SyncError(
                     FailureReason.HTTP_DATE_INVALID,
                     "$name: Date 헤더를 읽지 못했다: '${header.take(MAX_ECHO)}'",
                     null,

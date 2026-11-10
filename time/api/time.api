@@ -1,6 +1,7 @@
-public final class net/plumt/time/FailureReason : java/lang/Enum {
+public final class net/plumt/time/FailureReason {
 	public static final field ALL_SOURCES_FAILED Lnet/plumt/time/FailureReason;
 	public static final field CONNECTION_FAILED Lnet/plumt/time/FailureReason;
+	public static final field Companion Lnet/plumt/time/FailureReason$Companion;
 	public static final field HOST_NOT_FOUND Lnet/plumt/time/FailureReason;
 	public static final field HTTP_DATE_INVALID Lnet/plumt/time/FailureReason;
 	public static final field HTTP_DATE_MISSING Lnet/plumt/time/FailureReason;
@@ -8,35 +9,68 @@ public final class net/plumt/time/FailureReason : java/lang/Enum {
 	public static final field INVALID_RESPONSE Lnet/plumt/time/FailureReason;
 	public static final field INVALID_STRATUM Lnet/plumt/time/FailureReason;
 	public static final field KISS_OF_DEATH Lnet/plumt/time/FailureReason;
-	public static final field NOT_SYNCED Lnet/plumt/time/FailureReason;
 	public static final field NO_NETWORK Lnet/plumt/time/FailureReason;
 	public static final field ROUND_TRIP_TOO_LONG Lnet/plumt/time/FailureReason;
 	public static final field SERVER_UNSYNCHRONIZED Lnet/plumt/time/FailureReason;
 	public static final field SOURCE_ERROR Lnet/plumt/time/FailureReason;
 	public static final field TIMEOUT Lnet/plumt/time/FailureReason;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lnet/plumt/time/FailureReason;
-	public static fun values ()[Lnet/plumt/time/FailureReason;
+	public final fun getName ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
 }
 
-public final class net/plumt/time/FallbackPolicy : java/lang/Enum {
-	public static final field DEVICE_CLOCK Lnet/plumt/time/FallbackPolicy;
-	public static final field LAST_SYNC_ONLY Lnet/plumt/time/FallbackPolicy;
-	public static final field NONE Lnet/plumt/time/FallbackPolicy;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lnet/plumt/time/FallbackPolicy;
-	public static fun values ()[Lnet/plumt/time/FallbackPolicy;
+public final class net/plumt/time/FailureReason$Companion {
+	public final fun getValues ()Ljava/util/List;
+}
+
+public final class net/plumt/time/FakeTrustedClock : net/plumt/time/TrustedClock {
+	public fun <init> (J)V
+	public fun <init> (JLjava/lang/String;)V
+	public final fun advanceBy (J)V
+	public fun asJavaClock ()Ljava/time/Clock;
+	public final fun failWith (Lnet/plumt/time/FailureReason;)V
+	public final fun getEpochMillis ()J
+	public final fun getInvalidateCalls ()I
+	public final fun getNowCalls ()I
+	public final fun getSyncCalls ()I
+	public fun getZoneId ()Ljava/lang/String;
+	public fun invalidate ()V
+	public fun now (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun now (Lnet/plumt/time/TimeCallback;)Lnet/plumt/time/TimeCallHandle;
+	public fun peek ()Lnet/plumt/time/TimeReading;
+	public final fun setEpochMillis (J)V
+	public final fun succeed ()V
+	public fun sync (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun sync (Lnet/plumt/time/TimeCallback;)Lnet/plumt/time/TimeCallHandle;
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class net/plumt/time/FallbackPolicy {
+}
+
+public final class net/plumt/time/FallbackPolicy$DeviceClock : net/plumt/time/FallbackPolicy {
+	public static final field INSTANCE Lnet/plumt/time/FallbackPolicy$DeviceClock;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class net/plumt/time/FallbackPolicy$LastSyncOnly : net/plumt/time/FallbackPolicy {
+	public static final field INSTANCE Lnet/plumt/time/FallbackPolicy$LastSyncOnly;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class net/plumt/time/FallbackPolicy$None : net/plumt/time/FallbackPolicy {
+	public static final field INSTANCE Lnet/plumt/time/FallbackPolicy$None;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public abstract interface class net/plumt/time/MonotonicClock {
-	public static final field Companion Lnet/plumt/time/MonotonicClock$Companion;
 	public abstract fun elapsedMillis ()J
 	public abstract fun getBootId ()Ljava/lang/String;
-	public static fun system ()Lnet/plumt/time/MonotonicClock;
-}
-
-public final class net/plumt/time/MonotonicClock$Companion {
-	public final fun system ()Lnet/plumt/time/MonotonicClock;
 }
 
 public abstract interface class net/plumt/time/NetworkMonitor {
@@ -68,37 +102,111 @@ public abstract interface class net/plumt/time/SyncStateStore {
 	public static fun inMemory ()Lnet/plumt/time/SyncStateStore;
 	public abstract fun load ()Lnet/plumt/time/SyncSnapshot;
 	public abstract fun save (Lnet/plumt/time/SyncSnapshot;)V
+	public static fun sharedPreferences (Landroid/content/Context;)Lnet/plumt/time/SyncStateStore;
+	public static fun sharedPreferences (Landroid/content/Context;Ljava/lang/String;)Lnet/plumt/time/SyncStateStore;
 }
 
 public final class net/plumt/time/SyncStateStore$Companion {
 	public final fun inMemory ()Lnet/plumt/time/SyncStateStore;
+	public final fun sharedPreferences (Landroid/content/Context;)Lnet/plumt/time/SyncStateStore;
+	public final fun sharedPreferences (Landroid/content/Context;Ljava/lang/String;)Lnet/plumt/time/SyncStateStore;
 }
 
-public final class net/plumt/time/TimeOrigin : java/lang/Enum {
+public abstract interface class net/plumt/time/TimeCallHandle {
+	public abstract fun cancel ()V
+	public abstract fun isActive ()Z
+}
+
+public abstract interface class net/plumt/time/TimeCallback {
+	public abstract fun onResult (Lnet/plumt/time/TimeResult;)V
+}
+
+public final class net/plumt/time/TimeConfig {
+	public static final field Companion Lnet/plumt/time/TimeConfig$Companion;
+	public static final fun builder ()Lnet/plumt/time/TimeConfig$Builder;
+	public final fun getDispatcher ()Lkotlinx/coroutines/CoroutineDispatcher;
+	public final fun getFallbackPolicy ()Lnet/plumt/time/FallbackPolicy;
+	public final fun getHttpDateUrls ()Ljava/util/List;
+	public final fun getMaxAgeMillis ()J
+	public final fun getMaxRoundTripMillis ()J
+	public final fun getMonotonicClock ()Lnet/plumt/time/MonotonicClock;
+	public final fun getNetworkMonitor ()Lnet/plumt/time/NetworkMonitor;
+	public final fun getNtpServers ()Ljava/util/List;
+	public final fun getRefreshIntervalMillis ()J
+	public final fun getSources ()Ljava/util/List;
+	public final fun getStore ()Lnet/plumt/time/SyncStateStore;
+	public final fun getTimeoutMillis ()I
+	public final fun getWallClock ()Lnet/plumt/time/WallClock;
+	public final fun getZoneId ()Ljava/lang/String;
+	public final fun toBuilder ()Lnet/plumt/time/TimeConfig$Builder;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class net/plumt/time/TimeConfig$Builder {
+	public final fun build ()Lnet/plumt/time/TimeConfig;
+	public final fun dispatcher (Lkotlinx/coroutines/CoroutineDispatcher;)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun fallbackPolicy (Lnet/plumt/time/FallbackPolicy;)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun httpDateUrls (Ljava/util/List;)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun maxAgeMillis (J)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun maxRoundTripMillis (J)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun monotonicClock (Lnet/plumt/time/MonotonicClock;)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun networkMonitor (Lnet/plumt/time/NetworkMonitor;)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun ntpServers (Ljava/util/List;)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun refreshIntervalMillis (J)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun sources (Ljava/util/List;)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun store (Lnet/plumt/time/SyncStateStore;)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun timeoutMillis (I)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun wallClock (Lnet/plumt/time/WallClock;)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun zone (Ljava/lang/String;)Lnet/plumt/time/TimeConfig$Builder;
+	public final fun zone (Ljava/time/ZoneId;)Lnet/plumt/time/TimeConfig$Builder;
+}
+
+public final class net/plumt/time/TimeConfig$Companion {
+	public final fun builder ()Lnet/plumt/time/TimeConfig$Builder;
+}
+
+public final class net/plumt/time/TimeFailure {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAttempts ()Ljava/util/List;
+	public final fun getCause ()Ljava/lang/Throwable;
+	public final fun getMessage ()Ljava/lang/String;
+	public final fun getReason ()Lnet/plumt/time/FailureReason;
+	public final fun getSource ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class net/plumt/time/TimeOrigin {
 	public static final field CUSTOM Lnet/plumt/time/TimeOrigin;
+	public static final field Companion Lnet/plumt/time/TimeOrigin$Companion;
 	public static final field DEVICE_CLOCK Lnet/plumt/time/TimeOrigin;
 	public static final field HTTP_DATE Lnet/plumt/time/TimeOrigin;
 	public static final field NTP Lnet/plumt/time/TimeOrigin;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Lnet/plumt/time/TimeOrigin;
-	public static fun values ()[Lnet/plumt/time/TimeOrigin;
+	public final fun getName ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class net/plumt/time/TimeOrigin$Companion {
+	public final fun getValues ()Ljava/util/List;
 }
 
 public final class net/plumt/time/TimeQuery {
-	public fun <init> (ILnet/plumt/time/MonotonicClock;)V
 	public final fun getMonotonicClock ()Lnet/plumt/time/MonotonicClock;
 	public final fun getTimeoutMillis ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class net/plumt/time/TimeReading {
+	public fun equals (Ljava/lang/Object;)Z
 	public final fun getAgeMillis ()J
 	public final fun getDeviceClockOffsetMillis ()J
 	public final fun getEpochMillis ()J
-	public final fun getFailure ()Lnet/plumt/time/TimeSyncException;
+	public final fun getFailure ()Lnet/plumt/time/TimeFailure;
 	public final fun getOrigin ()Lnet/plumt/time/TimeOrigin;
 	public final fun getSourceName ()Ljava/lang/String;
 	public final fun getUncertaintyMillis ()Ljava/lang/Long;
 	public final fun getZoneId ()Ljava/lang/String;
+	public fun hashCode ()I
 	public final fun isDeviceFallback ()Z
 	public final fun isStale ()Z
 	public final fun toInstant ()Ljava/time/Instant;
@@ -109,12 +217,34 @@ public final class net/plumt/time/TimeReading {
 	public final fun toZonedDateTime (Ljava/time/ZoneId;)Ljava/time/ZonedDateTime;
 }
 
+public abstract interface class net/plumt/time/TimeResult {
+}
+
+public final class net/plumt/time/TimeResult$Failure : net/plumt/time/TimeResult {
+	public fun <init> (Lnet/plumt/time/TimeFailure;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFailure ()Lnet/plumt/time/TimeFailure;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class net/plumt/time/TimeResult$Success : net/plumt/time/TimeResult {
+	public fun <init> (Lnet/plumt/time/TimeReading;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getReading ()Lnet/plumt/time/TimeReading;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class net/plumt/time/TimeSample {
 	public fun <init> (JJJJ)V
+	public fun equals (Ljava/lang/Object;)Z
 	public final fun getAnchorElapsedMillis ()J
 	public final fun getRoundTripMillis ()J
 	public final fun getServerEpochMillis ()J
 	public final fun getUncertaintyMillis ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class net/plumt/time/TimeServers {
@@ -128,72 +258,56 @@ public final class net/plumt/time/TimeServers {
 public abstract interface class net/plumt/time/TimeSource {
 	public abstract fun getName ()Ljava/lang/String;
 	public abstract fun getOrigin ()Lnet/plumt/time/TimeOrigin;
-	public abstract fun query (Lnet/plumt/time/TimeQuery;)Lnet/plumt/time/TimeSample;
+	public abstract fun query (Lnet/plumt/time/TimeQuery;)Lnet/plumt/time/TimeSourceResult;
+}
+
+public abstract interface class net/plumt/time/TimeSourceResult {
+}
+
+public final class net/plumt/time/TimeSourceResult$Failure : net/plumt/time/TimeSourceResult {
+	public fun <init> (Lnet/plumt/time/FailureReason;Ljava/lang/String;)V
+	public fun <init> (Lnet/plumt/time/FailureReason;Ljava/lang/String;Ljava/lang/Throwable;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCause ()Ljava/lang/Throwable;
+	public final fun getMessage ()Ljava/lang/String;
+	public final fun getReason ()Lnet/plumt/time/FailureReason;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class net/plumt/time/TimeSourceResult$Success : net/plumt/time/TimeSourceResult {
+	public fun <init> (Lnet/plumt/time/TimeSample;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getSample ()Lnet/plumt/time/TimeSample;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class net/plumt/time/TimeSources {
 	public static final field INSTANCE Lnet/plumt/time/TimeSources;
-	public static final field NTP_PORT I
 	public static final fun httpDate (Ljava/lang/String;)Lnet/plumt/time/TimeSource;
-	public static final fun httpDate (Ljava/lang/String;Z)Lnet/plumt/time/TimeSource;
-	public static synthetic fun httpDate$default (Ljava/lang/String;ZILjava/lang/Object;)Lnet/plumt/time/TimeSource;
+	public static final fun httpDateAllowingCleartext (Ljava/lang/String;)Lnet/plumt/time/TimeSource;
 	public static final fun ntp (Ljava/lang/String;)Lnet/plumt/time/TimeSource;
 	public static final fun ntp (Ljava/lang/String;I)Lnet/plumt/time/TimeSource;
-	public static synthetic fun ntp$default (Ljava/lang/String;IILjava/lang/Object;)Lnet/plumt/time/TimeSource;
-}
-
-public final class net/plumt/time/TimeSyncException : java/lang/RuntimeException {
-	public fun <init> (Lnet/plumt/time/FailureReason;Ljava/lang/String;)V
-	public fun <init> (Lnet/plumt/time/FailureReason;Ljava/lang/String;Ljava/lang/Throwable;)V
-	public fun <init> (Lnet/plumt/time/FailureReason;Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/String;)V
-	public fun <init> (Lnet/plumt/time/FailureReason;Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/String;Ljava/util/List;)V
-	public synthetic fun <init> (Lnet/plumt/time/FailureReason;Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/String;Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public final fun getFailures ()Ljava/util/List;
-	public final fun getReason ()Lnet/plumt/time/FailureReason;
-	public final fun getSource ()Ljava/lang/String;
 }
 
 public abstract interface class net/plumt/time/TrustedClock {
 	public static final field Companion Lnet/plumt/time/TrustedClock$Companion;
 	public abstract fun asJavaClock ()Ljava/time/Clock;
-	public static fun builder ()Lnet/plumt/time/TrustedClock$Builder;
+	public static fun create (Landroid/content/Context;)Lnet/plumt/time/TrustedClock;
+	public static fun create (Landroid/content/Context;Lnet/plumt/time/TimeConfig;)Lnet/plumt/time/TrustedClock;
 	public abstract fun getZoneId ()Ljava/lang/String;
 	public abstract fun invalidate ()V
 	public abstract fun now (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun now (Lnet/plumt/time/TimeCallback;)Lnet/plumt/time/TimeCallHandle;
 	public abstract fun peek ()Lnet/plumt/time/TimeReading;
 	public abstract fun sync (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-}
-
-public final class net/plumt/time/TrustedClock$Builder {
-	public static final field DEFAULT_MAX_AGE_MILLIS J
-	public static final field DEFAULT_MAX_ROUND_TRIP_MILLIS J
-	public static final field DEFAULT_REFRESH_INTERVAL_MILLIS J
-	public static final field DEFAULT_TIMEOUT_MILLIS I
-	public static final field DEFAULT_ZONE_ID Ljava/lang/String;
-	public static final field MAX_INTERVAL_MILLIS J
-	public static final field MAX_TIMEOUT_MILLIS I
-	public static final field MIN_INTERVAL_MILLIS J
-	public static final field MIN_TIMEOUT_MILLIS I
-	public final fun build ()Lnet/plumt/time/TrustedClock;
-	public final fun dispatcher (Lkotlinx/coroutines/CoroutineDispatcher;)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun fallbackPolicy (Lnet/plumt/time/FallbackPolicy;)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun httpDateUrls (Ljava/util/List;)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun maxAgeMillis (J)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun maxRoundTripMillis (J)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun monotonicClock (Lnet/plumt/time/MonotonicClock;)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun networkMonitor (Lnet/plumt/time/NetworkMonitor;)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun ntpServers (Ljava/util/List;)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun refreshIntervalMillis (J)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun sources (Ljava/util/List;)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun store (Lnet/plumt/time/SyncStateStore;)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun timeoutMillis (I)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun wallClock (Lnet/plumt/time/WallClock;)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun zone (Ljava/lang/String;)Lnet/plumt/time/TrustedClock$Builder;
-	public final fun zone (Ljava/time/ZoneId;)Lnet/plumt/time/TrustedClock$Builder;
+	public abstract fun sync (Lnet/plumt/time/TimeCallback;)Lnet/plumt/time/TimeCallHandle;
 }
 
 public final class net/plumt/time/TrustedClock$Companion {
-	public final fun builder ()Lnet/plumt/time/TrustedClock$Builder;
+	public final fun create (Landroid/content/Context;)Lnet/plumt/time/TrustedClock;
+	public final fun create (Landroid/content/Context;Lnet/plumt/time/TimeConfig;)Lnet/plumt/time/TrustedClock;
 }
 
 public abstract interface class net/plumt/time/WallClock {

@@ -8,7 +8,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
-import net.plumt.time.internal.DefaultTrustedClock
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -28,20 +27,20 @@ class ConcurrencyTest {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
         @Volatile var calls = 0
-        override fun query(request: TimeQuery): TimeSample {
+        override fun query(request: TimeQuery): TimeSourceResult {
             calls++
             entered.countDown()
             check(release.await(10, TimeUnit.SECONDS)) { "풀리지 않았다" }
             if (fail) throw SocketTimeoutException("늦다")
-            return TimeSample(SERVER_TIME, mono.elapsedMillis(), 5, 5)
+            return TimeSourceResult.Success(TimeSample(SERVER_TIME, mono.elapsedMillis(), 5, 5))
         }
     }
 
-    private fun clockOf(source: TimeSource, policy: FallbackPolicy = FallbackPolicy.DEVICE_CLOCK) =
-        TrustedClock.builder().monotonicClock(mono).wallClock(FakeWall()).sources(listOf(source))
-            .fallbackPolicy(policy).dispatcher(Dispatchers.IO).build() as DefaultTrustedClock
+    private fun clockOf(source: TimeSource, policy: FallbackPolicy = FallbackPolicy.DeviceClock) =
+        TestBuilder().monotonicClock(mono).wallClock(FakeWall()).sources(listOf(source))
+            .fallbackPolicy(policy).dispatcher(Dispatchers.IO).build()
 
-    private suspend fun awaitWaiting(clock: DefaultTrustedClock, count: Int) {
+    private suspend fun awaitWaiting(clock: TestClock, count: Int) {
         withTimeout(10_000) {
             while (clock.waitingCallers.get() < count) yield()
         }
@@ -84,13 +83,13 @@ class ConcurrencyTest {
         val nowFollower = async { clock.now() }
         awaitWaiting(clock, 2)
         source.release.countDown()
-        val a = leader.await().exceptionOrNull() as TimeSyncException
-        val b = syncFollower.await().exceptionOrNull() as TimeSyncException
-        assertTrue(a === b)
+        val a = leader.await().exceptionOrNull() as FailedResult
+        val b = syncFollower.await().exceptionOrNull() as FailedResult
+        assertTrue(a.failure === b.failure)
         assertEquals(FailureReason.TIMEOUT, a.reason)
         val fallback = nowFollower.await()
         assertTrue(fallback.isDeviceFallback)
-        assertTrue(fallback.failure === a)
+        assertTrue(fallback.failure === a.failure)
         assertEquals(1, source.calls)
     }
 
@@ -137,7 +136,7 @@ class ConcurrencyTest {
             throw SocketTimeoutException()
         }
         val second = okSource(mono, name = "second")
-        val clock = TrustedClock.builder().monotonicClock(mono).sources(listOf(first, second))
+        val clock = TestBuilder().monotonicClock(mono).sources(listOf(first, second))
             .dispatcher(Dispatchers.IO).build()
         job = launch {
             try {
